@@ -14,7 +14,7 @@ respondent, places them on a social network, and lets them meet a product on an 
 forum and by word of mouth. They react, talk, change their minds, and answer survey waves about whether they
 would buy it.
 
-📖 **Documentation: <https://tailorec.github.io/jahan/>**
+📖 **Documentation: <https://fm882.github.io/jahan/>**
 
 ## What makes it different
 

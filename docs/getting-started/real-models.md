@@ -52,7 +52,7 @@ unless `XDG_CACHE_HOME` is set.
 ## 2. Install the engine
 
 ```bash
-git clone https://github.com/Tailorec/jahan.git
+git clone https://github.com/fm882/jahan.git
 cd jahan
 uv sync --extra web        # engine + HTTP API (FastAPI, uvicorn)
 uv run pytest -q           # optional: the suite, no network and no keys
@@ -265,7 +265,10 @@ uv run python -m simcore.cli concepts run <brief.yaml> --fake
 3. Pin the models a real run needs: chat model, embedding model, and
    `recsys_embed_model` when the feed is ticked. Declare prices — recorded
    costs come from the gateway, a declared price table, or stay unknown,
-   never an estimate presented as a price.
+   never an estimate presented as a price. Before launching, open the
+   scale's `v*.check.json` and confirm its `embed_model_id` is your
+   embedding model: a mismatch silently leaves the scale unscored and the
+   run spends its full budget collecting answers that go unmeasured.
 4. Launch, watch ticks close and spend accrue against the budget on the Run
    page, and read the report when it completes. A cancelled run resumes with
    the same id; a run outlives a server restart.
@@ -315,7 +318,7 @@ Worked real runs with their pins, prices and what broke are written up under
 
 [^adr21]: [ADR 0021](../adr/0021-the-engine-speaks-one-openai-compatible-endpoint.md) — one OpenAI-compatible endpoint, gateway retries/fallbacks/caching off.
 [^m4plan]: `plans/m4-inference.md` — LiteLLM/vLLM/Ollama configurations, engine owns retries, fallbacks and caching.
-[^readme]: [README](https://github.com/Tailorec/jahan#research-use-and-data) — research instrument; the corpus is downloaded, never bundled.
+[^readme]: [README](https://github.com/fm882/jahan#research-use-and-data) — research instrument; the corpus is downloaded, never bundled.
 [^hf]: `simcore/ports/hf.py` — `fetch_command`, manifest verification on every open, `MissingShard`.
 [^settings]: `simcore/inference/_settings.py` — `ExecutionSettings.from_environment`.
 [^salvage]: [Salvage inventory](../SALVAGE.md) — LiteLLM proxy as the shared rpm/tpm limiter.

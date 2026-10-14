@@ -10,7 +10,7 @@ Jahan is a Python engine with an optional local web interface.
 ## The engine
 
 ```bash
-git clone https://github.com/Tailorec/jahan.git
+git clone https://github.com/fm882/jahan.git
 cd jahan
 uv sync                    # the engine and its test dependencies
 uv run pytest              # optional: the whole suite, no network and no API keys

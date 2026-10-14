@@ -1,9 +1,9 @@
 site_name: Jahan
 site_description: An open, reproducible engine for simulating how a population of LLM personas reacts to a product — feeds, forums, word of mouth and survey waves, every number traceable to the turn that produced it.
 site_author: Faishal Manzar
-site_url: https://tailorec.github.io/jahan/
-repo_url: https://github.com/Tailorec/jahan
-repo_name: Tailorec/jahan
+site_url: https://fm882.github.io/jahan/
+repo_url: https://github.com/fm882/jahan
+repo_name: fm882/jahan
 edit_uri: edit/master/docs/
 copyright: Copyright 2026 Faishal Manzar · Functional Source License 1.1 (Apache-2.0 future license)
 
