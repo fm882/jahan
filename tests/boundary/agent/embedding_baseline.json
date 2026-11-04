@@ -1,0 +1,56 @@
+{
+  "baseline_revision": "7d757ccca575460874cba9399b3a15fd600d56be",
+  "personas": 4,
+  "ticks": 3,
+  "inference": "deterministic local fakes; no network",
+  "workloads": {
+    "empty": {
+      "content_hash": "6041c95a3a974449cb55c0c3ba19801240fb0baaa132491ee57226969cec42b6",
+      "prompts_hash": "68d083c508378df6eb51e7df6c3d1ca1f836fbb12299c74a3c418fbe22994c33",
+      "state_hash": "1390e53a4cf2c596ac44045ff2e010d3d6742623805beafd819bae15d8ea5bb2",
+      "embedding_calls": 32,
+      "submitted_texts": 32,
+      "elapsed_seconds": 0.012998948997847037
+    },
+    "repeated": {
+      "content_hash": "484ae0d09f2e7a699c1c405fa0d7bbd610591888fff0a1dba9aab909629bbf53",
+      "prompts_hash": "ac3129501a240e7a3c6a0b9f4e77fca78093e4455bbf6d61cd0a8b3369b15305",
+      "state_hash": "9d61737976ba2d7cf045582e658a26f23a6c29dce4bdd3016d3da4d2c6bb7554",
+      "embedding_calls": 32,
+      "submitted_texts": 32,
+      "elapsed_seconds": 0.01089420800053631
+    },
+    "unique": {
+      "content_hash": "558566a2cfb0d5244a94fa0cf419ac75f6118455e0822cbefc515f45bfa9bbb0",
+      "prompts_hash": "11f5252223ea6a709f5e02db4fcdadb7ded99cf0e9cc66d84a611e441b852231",
+      "state_hash": "aacd5003ae7652ac363b84a32210a9ef7a75e04196839a2ebb7cd9bb5dc58344",
+      "embedding_calls": 32,
+      "submitted_texts": 32,
+      "elapsed_seconds": 0.012297105000470765
+    },
+    "reflections": {
+      "content_hash": "5b7c92601befc4b4112c61e63ce2e8702295aaddf599e99cdb767933a61a54ce",
+      "prompts_hash": "002a26547b147caab0f783b3892cb4ec9deaa31589c26879ceff7f68d544403c",
+      "state_hash": "a8ce3024fe16567659a277bad58e815d8fbd094d06837ee332cffdbe4f3e9167",
+      "embedding_calls": 48,
+      "submitted_texts": 48,
+      "elapsed_seconds": 0.015417607999552274
+    },
+    "guardrails": {
+      "content_hash": "95df63ebaebe817df2043a1e67e832f0485e3f11a39533a5b039b7d59f8140f5",
+      "prompts_hash": "0ee72306544ff46a7ed80c968ad724ee165612c3b011c6be07a447fef630bf8e",
+      "state_hash": "9d61737976ba2d7cf045582e658a26f23a6c29dce4bdd3016d3da4d2c6bb7554",
+      "embedding_calls": 32,
+      "submitted_texts": 32,
+      "elapsed_seconds": 0.009252964999177493
+    },
+    "fallback": {
+      "content_hash": "d70447371f554359335f9cd34562e12f75751c938bb64398d598577dd0e22a05",
+      "prompts_hash": "c107bb1aaf4cf1f1b0da71b954bb425441530a4b26b8dac181272af7da6285bb",
+      "state_hash": "37c50c85a377ec59e9f571c17c832956d80ec6c7892145d526e2ab63c8bac138",
+      "embedding_calls": 36,
+      "submitted_texts": 36,
+      "elapsed_seconds": 0.0073014719964703545
+    }
+  }
+}
