@@ -93,6 +93,8 @@ def test_batches_respect_the_size_cap_and_return_vectors_in_input_order():
     assert len(recorder.bodies) == 3  # 3 + 3 + 2
     assert all(len(body["input"]) <= 3 for body in recorder.bodies)
     assert result.vectors.shape == (8, 4)
+    assert [(batch.start, batch.stop) for batch in result.batches] == [(0, 3), (3, 6), (6, 8)]
+    assert tuple(cost for batch in result.batches for cost in batch.costs) == result.costs
     for position, text in enumerate(TEXTS):
         raw = np.array([signature(text) + component for component in range(4)], dtype=np.float32)
         assert np.allclose(result.vectors[position], raw / np.linalg.norm(raw), atol=1e-5)  # reversed per batch, restored overall
@@ -136,6 +138,42 @@ def test_an_exhausted_embedding_call_fails_it_never_falls_back():
     assert raised.value.failure.kind is FailureKind.FATAL_RESPONSE
     assert raised.value.failure.route is InferenceRoute.PRIMARY
     assert state["sent"] == 3  # bounded retries, one model, no substitution
+
+
+def test_failed_invocation_settles_and_retains_bills_from_successful_siblings():
+    import asyncio
+
+    async def handler(request):
+        text = json.loads(request.content)["input"][0]
+        if text == "bad":
+            return httpx.Response(503, content=b"down")
+        await asyncio.sleep(0.01)
+        return embed_reply(cost=0.03)(request)
+
+    time = FakeTime()
+    client = InferenceClient(
+        ModelPins.model_validate({"tier_a": PINS.tier_a, "tier_b": PINS.tier_b, "embed": EMBED}),
+        ExecutionSettings(base_url="http://gateway.test/v1", embeddings_batch_size=1, max_retries=0),
+        transport=httpx.MockTransport(handler), clock=time.clock, sleep=time.sleep,
+    )
+    with pytest.raises(EmbeddingFailure) as raised:
+        client.embed(["bad", "good"])
+    assert [(batch.start, batch.stop) for batch in raised.value.batches] == [(0, 1), (1, 2)]
+    assert sum(cost.cost for cost in raised.value.failure.costs) == 0.03
+
+
+def test_malformed_billed_vectors_are_a_failure_with_their_cost_retained():
+    def malformed(request):
+        response = embed_reply(cost=0.02)(request)
+        payload = json.loads(response.content)
+        payload["data"] = [{"index": 0, "embedding": [float("nan")]}]
+        return httpx.Response(200, content=json.dumps(payload).encode())
+
+    client, _ = client_for(Recorder(malformed), max_retries=0)
+    with pytest.raises(EmbeddingFailure) as raised:
+        client.embed(["one"])
+    assert raised.value.failure.kind is FailureKind.INVALID_OUTPUT
+    assert raised.value.failure.costs[0].cost == 0.02
 
 
 def test_an_undeclared_embedding_model_is_a_pin_failure_not_a_different_space():

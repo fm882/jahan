@@ -127,6 +127,24 @@ class ProbeRecorded(SimBaseModel):
     result: ProbeResult
 
 
+class CostAllocation(SimBaseModel):
+    """Non-additive original bill and a job's exact estimated share of it."""
+
+    billing_id: Identifier
+    method: Literal["estimated_tokens"] = "estimated_tokens"
+    numerator: NonNegativeInt
+    denominator: Annotated[int, Field(gt=0)]
+    original_input_tokens: NonNegativeInt
+    original_output_tokens: NonNegativeInt
+    original_cost: Annotated[float, Field(ge=0.0)] | None
+
+    @model_validator(mode="after")
+    def _share_is_at_most_the_bill(self) -> Self:
+        if self.numerator > self.denominator:
+            raise ValueError("an allocated share cannot exceed its original bill")
+        return self
+
+
 class CostRecorded(SimBaseModel):
     """What one model call billed: the model the study pinned, the model that actually served it as the
     response reported, which route served it, and where the cost came from. A cost nobody knows stays
@@ -142,9 +160,16 @@ class CostRecorded(SimBaseModel):
     input_tokens: NonNegativeInt
     output_tokens: NonNegativeInt
     cost: Annotated[float, Field(ge=0.0)] | None = None
+    # Omit absent allocation metadata, preserving old event serialization/hashes.
+    allocation: CostAllocation | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _cost_states_its_source(self) -> Self:
+        if self.allocation is not None:
+            if (self.cost is None) != (self.allocation.original_cost is None):
+                raise ValueError("allocated costs preserve whether the original bill was priced")
+            if self.cost is not None and self.cost > self.allocation.original_cost:
+                raise ValueError("an allocated cost cannot exceed its original bill")
         if (self.cost is None) != (self.cost_source is CostSource.UNKNOWN):
             raise ValueError(
                 f"an unknown cost is recorded as absent and a known cost names its source, but this record "

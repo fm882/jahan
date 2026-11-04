@@ -8,13 +8,25 @@ The port promises what a real embedding call produces: the vectors in input orde
 was pinned and the one that served, and what each batch cost."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from uuid import uuid4
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
 if TYPE_CHECKING:
     from simcore.schemas import CostRecorded
+
+
+@dataclass(frozen=True)
+class EmbedBatch:
+    """One physical batch's input range and bills, including when its invocation fails."""
+
+    start: int
+    stop: int
+    costs: tuple["CostRecorded", ...]
+    served_model_id: str | None = None
+    billing_id: str = field(default_factory=lambda: uuid4().hex)
 
 
 @dataclass(frozen=True)
@@ -27,6 +39,7 @@ class EmbedResult:
     normalization: str
     dim: int
     costs: tuple["CostRecorded", ...]
+    batches: tuple[EmbedBatch, ...] = ()
 
 
 @runtime_checkable

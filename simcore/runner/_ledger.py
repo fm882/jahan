@@ -12,24 +12,37 @@ from __future__ import annotations
 from simcore.schemas import TraceEvent
 
 
+def _bills(events):
+    """Count physical bills once; allocations are not additional model calls."""
+    seen = set()
+    for event in events:
+        cost = event.payload
+        if cost.kind != "cost":
+            continue
+        if cost.allocation is None:
+            yield cost.cost
+        else:
+            key = (event.world_id, cost.allocation.billing_id)
+            if key not in seen:
+                seen.add(key)
+                yield cost.allocation.original_cost
+
+
 def ledger_sum(events: tuple[TraceEvent, ...] | list[TraceEvent]) -> tuple[float, int]:
     """Known spend and how many costs are unknown. Unknown never becomes zero."""
     known = 0.0
-    unknown = 0
     for event in events:
         payload = event.payload
         if payload.kind != "cost":
             continue
-        if payload.cost is None:
-            unknown += 1
-        else:
+        if payload.cost is not None:
             known += float(payload.cost)
-    return known, unknown
+    return known, sum(cost is None for cost in _bills(events))
 
 
 def mean_call_cost(events: tuple[TraceEvent, ...] | list[TraceEvent]) -> float | None:
     """Mean cost of the calls that came with a price, or nothing when none did."""
-    priced = [float(e.payload.cost) for e in events if e.payload.kind == "cost" and e.payload.cost is not None]
+    priced = [float(cost) for cost in _bills(events) if cost is not None]
     if not priced:
         return None
     return sum(priced) / len(priced)
@@ -100,6 +113,8 @@ class SpendMeter:
         self._known = 0.0
         self._unpriced = 0
         self._priced = 0
+        self._priced_original = 0.0
+        self._bills_seen = set()
         self._closed_ticks: set[tuple[str, int]] = set()
 
     def add(self, events) -> None:
@@ -108,18 +123,27 @@ class SpendMeter:
             for event in events:
                 payload = event.payload
                 if payload.kind == "cost":
-                    if payload.cost is None:
+                    if payload.cost is not None:
+                        self._known += float(payload.cost)
+                    allocation = payload.allocation
+                    if allocation is not None:
+                        key = (event.world_id, allocation.billing_id)
+                        if key in self._bills_seen:
+                            continue
+                        self._bills_seen.add(key)
+                    original = payload.cost if allocation is None else allocation.original_cost
+                    if original is None:
                         self._unpriced += 1
                     else:
-                        self._known += float(payload.cost)
                         self._priced += 1
+                        self._priced_original += float(original)
                 elif payload.kind == "tick_closed":
                     self._closed_ticks.add((event.world_id, event.tick))
 
     def _priced_spend(self) -> float:
         if not self._unpriced or not self._priced:
             return self._known
-        return self._known + self._unpriced * (self._known / self._priced)
+        return self._known + self._unpriced * (self._priced_original / self._priced)
 
     def spent(self) -> float:
         """What the run's own records add up to so far — the published figure, not the enforced one.
