@@ -17,12 +17,8 @@ from pathlib import Path
 from simcore.agent import AgentConfig, PersonaBlockCache
 from simcore.agent import turns as agent_turns
 from simcore.analysis import (
-    cluster_objections,
-    cluster_reasons,
-    detect_anomalies,
+    analyze_record,
     digest,
-    findings,
-    spread,
     trace_summary,
     trust_statement,
 )
@@ -684,54 +680,25 @@ def analyze_study(handles: StudyHandles, result: RunResult) -> dict:
     """
     store, config = handles.store, handles.config
     completed = {outcome.world_id for outcome in result.outcomes if outcome.status is WorldStatus.COMPLETED}
-    digests: list[OutcomeDigest] = []
-    cells: dict[str, dict] = {}
+    cells = {}
     for scenario in config.scenarios:
         for seed in config.seeds:
             world_id = derive_world_id(scenario, seed, config.population_hash)
-            if world_id not in completed:
-                continue
-            view = store.view(config.run_id, world_id)
-            outcome = digest(
-                view,
-                scenario=scenario,
-                population=handles.population,
-                seed=seed,
-                pinned_embed_model=handles.embed_pin,
-            )
-            digests.append(outcome)
-            cells[world_id] = {"scenario": scenario, "seed": seed, "view": view, "digest": outcome}
-    summaries = {}
-    for scenario in config.scenarios:
-        scenario_cells = [cell["digest"] for cell in cells.values() if cell["scenario"] == scenario]
-        if scenario_cells:
-            summaries[canonical_hash(scenario)] = spread(scenario_cells)
-    worlds = {}
-    for world_id, cell in cells.items():
-        summary = summaries[canonical_hash(cell["scenario"])]
-        # Cluster once and hand the result to `findings`: the same verbatims embedded twice
-        # is the same answer at twice the price.
-        clusters = cluster_objections(cell["view"], embed=handles.embed, pinned_embed_model=handles.embed_pin,
-                                      world_id=world_id)
-        reasons = cluster_reasons(cell["view"], embed=handles.embed, pinned_embed_model=handles.embed_pin,
-                                  world_id=world_id)
-        found = findings(cell["view"], embed=handles.embed, pinned_embed_model=handles.embed_pin,
-                         seed=cell["seed"], world_id=world_id, clusters=clusters, digest=cell["digest"])
-        detected = detect_anomalies(cell["view"], digest=cell["digest"], replicate_spread=summary.belief_move_spread)
-        worlds[world_id] = {
-            "scenario": cell["scenario"],
-            "seed": cell["seed"],
-            "digest": cell["digest"],
-            "findings": found,
-            "anomalies": detected.anomalies,
-            "unmeasured": detected.unmeasured,
-            "clusters": clusters,
-            "reasons": reasons,
-        }
-    return {"digests": digests, "worlds": worlds, "summaries": summaries}
+            if world_id in completed:
+                cells[world_id] = (scenario, seed)
+    views = {}
+    for outcome in result.outcomes:
+        try:
+            views[outcome.world_id] = store.view(config.run_id, outcome.world_id)
+        except UnknownWorldError:
+            if outcome.world_id in completed:
+                raise
+    return analyze_record(views, cells=cells, run_id=handles.run_id,
+                          population=handles.population, embed=handles.embed,
+                          pinned_embed_model=handles.embed_pin)
 
 
-def write_trace_summary(handles: StudyHandles, result: RunResult) -> dict:
+def write_trace_summary(handles: StudyHandles, result: RunResult, *, summary=None) -> dict:
     """Write `trace-summary.json` over every world that has any record.
 
     A finished run's worlds answer from their finalized record, a paused run's
@@ -739,13 +706,14 @@ def write_trace_summary(handles: StudyHandles, result: RunResult) -> dict:
     a paused run writes what it has. The summary joins the five shapes and nothing
     else; the CLI derives nothing.
     """
-    views = {}
-    for outcome in result.outcomes:
-        try:
-            views[outcome.world_id] = handles.store.view(handles.run_id, outcome.world_id)
-        except Exception:
-            continue
-    summary = trace_summary(views, run_id=handles.run_id)
+    if summary is None:
+        views = {}
+        for outcome in result.outcomes:
+            try:
+                views[outcome.world_id] = handles.store.view(handles.run_id, outcome.world_id)
+            except UnknownWorldError:
+                continue
+        summary = trace_summary(views, run_id=handles.run_id)
     (handles.run_dir / "trace-summary.json").write_text(summary.model_dump_json(indent=2) + "\n")
     return json.loads(summary.model_dump_json())
 

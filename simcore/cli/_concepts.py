@@ -95,10 +95,11 @@ def cmd_concepts_run(argv: list[str] | None = None) -> int:
     record_launch(handles.run_dir, handles.run_id, ["concepts", "run", *(argv if argv is not None else sys.argv[3:])])
     result = run_study(handles, force=args.force)
 
+    analysis = None
     if any(outcome.status.value == "completed" for outcome in result.outcomes):
         analysis = analyze_study(handles, result)
         write_report(handles, analysis, validation=args.validation or DEFAULT_VALIDATION)
-    write_trace_summary(handles, result)
+    write_trace_summary(handles, result, summary=analysis["trace_summary"] if analysis else None)
     # The completion marker goes last: a run reporting completed has its report,
     # its digest and its trace summary on disk, never a promise of them.
     (handles.run_dir / "result.json").write_text(result.model_dump_json(indent=2) + "\n")
