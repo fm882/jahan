@@ -89,18 +89,18 @@ while each world is open. Do not replace it with a hash of per-world hashes.
 
 ### Acceptance criteria
 
-- [ ] Multi-world summary JSON, world ordering, aggregate costs and trace hash
+- [x] Multi-world summary JSON, world ordering, aggregate costs and trace hash
       match the baseline, regardless of incoming world enumeration order.
-- [ ] Each finished world incurs one full partition load per summary operation.
-- [ ] Before the next snapshot opens, the preceding snapshot's full events and
+- [x] Each finished world incurs one full partition load per summary operation.
+- [x] Before the next snapshot opens, the preceding snapshot's full events and
       indexes are no longer retained by orchestration or summary assembly.
-- [ ] A failure midway through a sweep releases the active snapshot and does
+- [x] A failure midway through a sweep releases the active snapshot and does
       not silently publish a successful replacement summary.
-- [ ] A completed world in a partial run is eligible based on its immutable
+- [x] A completed world in a partial run is eligible based on its immutable
       partition; unfinished worlds continue using the uncached live path.
-- [ ] Partial-study summaries retain existing world coverage and visibility,
+- [x] Partial-study summaries retain existing world coverage and visibility,
       including lifecycle and degradation records.
-- [ ] CLI and HTTP boundary tests cover sequential summaries, mixed world
+- [x] CLI and HTTP boundary tests cover sequential summaries, mixed world
       status, stored summary artifacts and unchanged response contracts.
 
 ---
@@ -196,3 +196,7 @@ this phase completes the comparative measurements and their write-up.
   water example used by existing tests. Restored local copies from the parents
   of removal commits `7295ef7` and `8957bd7`; these are not production changes
   and are not included in implementation commits.
+
+- Phase 2: 30 checks passed (one known baseline web failure deselected),
+  including multi-world event weak-reference release, injected failure cleanup,
+  stable hash/order and mixed finalized/live summary coverage.

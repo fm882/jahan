@@ -88,3 +88,84 @@ def test_live_and_multiworld_views_are_not_frozen(tmp_path):
     multi = ParquetTraceView(tmp_path, entry.config.run_id, (header.world_id, 'f' * 12))
     with snapshot_scope(multi) as current:
         assert current is multi
+
+
+def two_worlds(tmp_path, *, finalize_second=True):
+    from simcore.schemas import PartitionHeader
+    from tests.study_builders import partition_header_payload
+    from tests.boundary.trace.support import write_by_tick
+
+    store = TraceStore(tmp_path)
+    header, entry, events = seed_store(store)
+    seed = next(seed for seed in entry.config.seeds if seed != header.replicate_seed)
+    second = PartitionHeader.model_validate({**partition_header_payload(), 'replicate_seed': seed})
+    store.create_world(entry.config.run_id, second)
+    copied = [event.model_copy(update={'world_id': second.world_id,
+               'event_id': f'ev-{"1" * 22}{index:04d}'}) for index, event in enumerate(events)]
+    write_by_tick(store, copied)
+    store.finalize(header.world_id)
+    if finalize_second:
+        store.finalize(second.world_id)
+    return store, entry, (header.world_id, second.world_id)
+
+
+def test_multiworld_summary_releases_events_before_the_next_partition_load(tmp_path):
+    store, entry, worlds = two_worlds(tmp_path)
+    views = {world: store.view(entry.config.run_id, world) for world in reversed(sorted(worlds))}
+    refs = []
+    loads = []
+
+    def loading(*args):
+        assert all(ref() is None for ref in refs)
+        events = read_finalized_events(*args)
+        refs.extend(weakref.ref(event) for event in events)
+        loads.append(args[-1])
+        return events
+
+    with patch('simcore.trace.finalize.read_finalized_events', side_effect=loading):
+        summary = trace_summary(views, run_id=entry.config.run_id)
+    assert loads == sorted(worlds)
+    assert all(ref() is None for ref in refs)
+    assert list(summary.worlds) == sorted(worlds)
+    with patch('simcore.trace.finalize.read_finalized_events', side_effect=loading):
+        assert trace_summary(dict(reversed(list(views.items()))), run_id=entry.config.run_id) == summary
+
+
+def test_mixed_summary_reuses_only_the_finalized_world(tmp_path):
+    from simcore.trace.views import SqliteTraceView
+
+    store, entry, worlds = two_worlds(tmp_path, finalize_second=False)
+    store.registry.update(entry.model_copy(update={'status': 'paused'}))
+    finished, live = (store.view(entry.config.run_id, world) for world in worlds)
+    assert isinstance(finished, ParquetTraceView)
+    assert isinstance(live, SqliteTraceView)
+    with patch('simcore.trace.finalize.read_finalized_events', wraps=read_finalized_events) as load:
+        summary = trace_summary(dict(zip(worlds, (finished, live))), run_id=entry.config.run_id)
+        assert load.call_count == 1
+    assert set(summary.worlds) == set(worlds)
+    # Borrowing a live view never replaces it with a cached revision.
+    with snapshot_scope(live) as current:
+        before = current.events(EventFilter())
+        with patch.object(store, 'read_live', return_value=()):
+            assert current.events(EventFilter()) == ()
+        assert current.events(EventFilter()) == before
+
+
+def test_multiworld_failure_releases_active_snapshot_and_propagates(tmp_path):
+    from simcore.analysis._trace_summary import TraceSummaryBuilder
+
+    store, entry, worlds = two_worlds(tmp_path)
+    views = {world: store.view(entry.config.run_id, world) for world in worlds}
+    refs = []
+    original = TraceSummaryBuilder.add_world
+
+    def failing(builder, world, view):
+        refs.append(weakref.ref(view.events(EventFilter())[0]))
+        if len(refs) == 2:
+            raise ValueError('injected failure')
+        return original(builder, world, view)
+
+    with patch.object(TraceSummaryBuilder, 'add_world', failing):
+        with pytest.raises(ValueError, match='injected failure'):
+            trace_summary(views, run_id=entry.config.run_id)
+    assert all(ref() is None for ref in refs)
