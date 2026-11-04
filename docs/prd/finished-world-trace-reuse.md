@@ -1,6 +1,7 @@
 # PRD — Finished-world trace reuse
 
-Status: specified after design discussion; implementation not started.
+Status: implemented and verified. See the [completed plan](../../plans/finished-world-trace-reuse.md)
+and [evaluation](../evaluations/2026-11-04-trace-reuse/README.md).
 
 ## Problem Statement
 

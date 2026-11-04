@@ -4,7 +4,7 @@
 >
 > Decision: [ADR 0054](../docs/adr/0054-finished-world-analysis-reuses-a-scoped-trace-snapshot.md)
 >
-> Four-phase breakdown approved 2026-11-04. Implementation in progress.
+> Four-phase breakdown approved 2026-11-04. All four phases implemented and verified.
 
 ## Architectural decisions
 
@@ -168,22 +168,22 @@ this phase completes the comparative measurements and their write-up.
 
 ### Acceptance criteria
 
-- [ ] Record artifact identity, event/persona counts, selected histories,
+- [x] Record artifact identity, event/persona counts, selected histories,
       environment, comparison revisions and reproduction instructions.
-- [ ] Perform at least five measured repetitions per case and report individual
+- [x] Perform at least five measured repetitions per case and report individual
       observations, median and range; state warm-up and filesystem-cache conditions.
-- [ ] Optimized elapsed time includes loading, validation, index construction
+- [x] Optimized elapsed time includes loading, validation, index construction
       and derivation. Fixed inference inputs isolate analysis changes.
-- [ ] Peak memory is measured in separate processes to avoid stale high-water
+- [x] Peak memory is measured in separate processes to avoid stale high-water
       marks. Report both absolute measurements and the before/after comparison.
-- [ ] Verify unchanged outputs for each measured case and report actual full
+- [x] Verify unchanged outputs for each measured case and report actual full
       partition-read counts, including report-plus-summary generation.
-- [ ] Resource-lifetime tests demonstrate sequential release independently of
+- [x] Resource-lifetime tests demonstrate sequential release independently of
       RSS, which may remain high after object release.
-- [ ] Investigate and resolve or explicitly account for regressions on targeted
+- [x] Investigate and resolve or explicitly account for regressions on targeted
       repeated-read operations before declaring the work complete.
-- [ ] Run the relevant trace, analysis, report, CLI and web regression checks.
-- [ ] Publish measured scope and limitations without promising a universal
+- [x] Run the relevant trace, analysis, report, CLI and web regression checks.
+- [x] Publish measured scope and limitations without promising a universal
       10.9x speedup or an end-to-end simulation speedup.
 
 
@@ -210,3 +210,14 @@ this phase completes the comparative measurements and their write-up.
 - Follow-up trust checks: 36 targeted snapshot, prepared-analysis and anomaly
   checks passed, including migration through the snapshot loader, newer-version
   refusal and corrupt-partition rejection before snapshot queries.
+
+- Phase 4: all 40 measured observations across four cases match baseline output
+  fingerprints. Median speedups are 9.48x, 48.31x, 48.56x and 17.34x; partition
+  loads are 1, 1, 1 and 4 respectively. Median peak process RSS is lower in each
+  case. Raw observations, reproduction instructions, final-code replay and
+  known baseline failures are recorded in the
+  [evaluation](../docs/evaluations/2026-11-04-trace-reuse/README.md).
+- Final compatibility verification: 46 targeted checks passed after preserving
+  invalid persona-argument errors. The final-code benchmark replay matches all
+  four output fingerprints and partition-read counts. No unchecked criteria
+  remain; live reuse, cross-request caches and storage pushdown remain deferred.

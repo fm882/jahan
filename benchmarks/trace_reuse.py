@@ -12,6 +12,7 @@ uses the repository's existing CLI test fixtures (see the accompanying README).
 
 import argparse
 import hashlib
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -150,7 +151,8 @@ def compare(args):
              dict(name='larger-fifty', run=Path(fixtures['larger']), histories=50, operation='summary'),
              dict(name='multi-report', run=Path(fixtures['multi']), histories=50, operation='report')]
     results = dict(environment=dict(python=sys.version, platform=platform.platform(),
-                   processor=platform.processor(), cpu_count=os.cpu_count()),
+                   processor=platform.processor(), cpu_count=os.cpu_count(),
+                   dependencies={name: version(name) for name in ('numpy', 'pyarrow', 'pydantic', 'scipy', 'networkx', 'igraph')}),
                    conditions='Fresh processes; imports and population setup excluded from timers; '
                               'OS filesystem cache not flushed; one unmeasured warmup per checkout/case; '
                               'fixed FakeEmbed for synthetic report; no external inference.', cases=[])
