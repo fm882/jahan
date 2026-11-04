@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from typing import Annotated, Any, Literal, NamedTuple, Self
 
-from pydantic import Field, StringConstraints, computed_field, model_validator
+from pydantic import Field, StringConstraints, computed_field, model_serializer, model_validator
 
 from . import base
 from .base import (
@@ -161,7 +161,15 @@ class CostRecorded(SimBaseModel):
     output_tokens: NonNegativeInt
     cost: Annotated[float, Field(ge=0.0)] | None = None
     # Omit absent allocation metadata, preserving old event serialization/hashes.
-    allocation: CostAllocation | None = Field(default=None, exclude_if=lambda value: value is None)
+    allocation: CostAllocation | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_allocation(self, serialize):
+        # Use the serializer supported by the project's existing Pydantic minimum.
+        data = serialize(self)
+        if self.allocation is None:
+            data.pop("allocation", None)
+        return data
 
     @model_validator(mode="after")
     def _cost_states_its_source(self) -> Self:
