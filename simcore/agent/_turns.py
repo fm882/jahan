@@ -169,7 +169,6 @@ def turns(
                         intents.get(position),
                         probe_by_position.get(position),
                         cfg,
-                        embed if second.get(position) is not None else None,
                     )
                 )
             except Exception as error:  # noqa: BLE001 — one outcome per job, whatever happened (ADR 0031)
@@ -186,19 +185,17 @@ def turns(
                         costs=tuple(entry.item.costs),
                     )
                 )
-    return _embed_memories(results, prepared, embed, positions={
-        position for position in range(len(prepared)) if second.get(position) is None
-    })
+    return _embed_memories(results, prepared, embed)
 
 
-def _embed_memories(results, prepared, embed, *, positions):
+def _embed_memories(results, prepared, embed):
     """Attach shared vectors to separate memory events, retaining each job's bill."""
     if embed is None:
         return tuple(results)
     inputs = {
         position: [memory.description for memory in outcome.memories]
         for position, outcome in enumerate(results)
-        if position in positions and isinstance(outcome, CompletedTurn)
+        if isinstance(outcome, CompletedTurn)
     }
     embedded = embed_texts(inputs, embed, scope=_embedding_scope(prepared, "memory"))
     for position in inputs:
@@ -613,7 +610,7 @@ def _reflection_request(entry: _Reacted, cfg: AgentConfig) -> ChatRequest:
 
 
 def _reflection_memories(
-    entry: _Reacted, answer: Completion | CallFailure | None, tick: int, embed
+    entry: _Reacted, answer: Completion | CallFailure | None, tick: int
 ) -> tuple[BeliefChange, tuple[MemoryEvent, ...]]:
     """The reflection's revision and its consolidated memories — or the rule-based fallback."""
     assert isinstance(entry.outcome, Completion) and entry.parsed is not None
@@ -632,8 +629,6 @@ def _reflection_memories(
                     description=sentence,
                     importance=CONSOLIDATED_IMPORTANCE,
                     source=MemorySource.REFLECTION,
-                    embed=embed,
-                    costs=entry.item.costs,
                 )
                 for index, sentence in enumerate(split_summary(parsed.summary))
             )
@@ -645,8 +640,6 @@ def _reflection_memories(
         description=f"On reflection: {describe_turn(action, subject, verbatim)}",
         importance=CONSOLIDATED_IMPORTANCE,
         source=MemorySource.REFLECTION,
-        embed=embed,
-        costs=entry.item.costs,
     )
     return BeliefChange(), (fallback,)
 
@@ -664,7 +657,6 @@ def _finalize(
     intent: SsrOutcome | None,
     probed: _Probed | None,
     cfg: AgentConfig,
-    embed,
 ) -> TurnOutcome:
     if entry.failure is not None:
         return entry.failure
@@ -675,7 +667,7 @@ def _finalize(
     if answer is None:
         revision, consolidated = BeliefChange(), ()
     else:
-        revision, consolidated = _reflection_memories(entry, answer, tick, embed)
+        revision, consolidated = _reflection_memories(entry, answer, tick)
     change = combine(entry.parsed.belief_change, revision)
     if cfg.tier_for(job.task) is InferenceRole.TIER_B and entry.parsed.importance is not None:
         importance = entry.parsed.importance
@@ -701,8 +693,6 @@ def _finalize(
         description=describe_turn(action, subject, verbatim),
         importance=importance,
         source=MemorySource.TURN,
-        embed=embed,
-        costs=entry.item.costs,
     )
     completed = CompletedTurn(
         turn=turn,

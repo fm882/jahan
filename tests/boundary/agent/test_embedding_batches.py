@@ -206,3 +206,24 @@ def test_memory_embedding_failure_retains_chat_costs_and_does_not_retry_texts():
     assert len(embed.calls) == 1
     assert all(isinstance(outcome, TurnFailure) for outcome in outcomes)
     assert all(len(outcome.costs) == 1 and outcome.costs[0].role.value == "tier_a" for outcome in outcomes)
+
+
+@pytest.mark.parametrize("summary,expected", [
+    ('{"summary":"The claim held up. The price seems fair."}', 3),
+    ('not json', 2),
+])
+def test_reflections_share_one_memory_stage_without_merging_events(summary, expected):
+    from tests.boundary.agent.embedding_workload import CountingEmbed
+    from tests.boundary.agent.support import by_template
+
+    embed = CountingEmbed()
+    config = replace(quiet_config(), reflection_interval=1)
+    outcomes = turns([make_job(index, n=index) for index in range(4)],
+                     chat=FakeChat(by_template({"persona_reflection": summary})), embed=embed, config=config)
+    assert all(isinstance(outcome, CompletedTurn) for outcome in outcomes)
+    assert len(embed.calls) == 1
+    assert len(embed.calls[0]) == expected
+    assert all(len(outcome.memories) == expected for outcome in outcomes)
+    assert len({memory.memory_id for outcome in outcomes for memory in outcome.memories}) == 4 * expected
+    assert all(outcome.memories[0].source.value == "turn" for outcome in outcomes)
+    assert all(memory.source.value == "reflection" for outcome in outcomes for memory in outcome.memories[1:])
