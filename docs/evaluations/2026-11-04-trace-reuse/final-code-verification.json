@@ -1,0 +1,56 @@
+{
+  "revision": "00933474ccc8e72cab78ce12aa74fbc4c2ea6494",
+  "cases": [
+    {
+      "case": "original-five",
+      "observation": {
+        "seconds": 1.038815601998067,
+        "peak_rss_kib": 389628,
+        "partition_reads": 1,
+        "loaded_worlds": [
+          "921ba092613d"
+        ],
+        "output_sha256": "df96a0c051aea3ca0351522898723bcf7d523c22e94024a282fc26e2ca88b071"
+      }
+    },
+    {
+      "case": "original-fifty",
+      "observation": {
+        "seconds": 1.0114578310021898,
+        "peak_rss_kib": 393536,
+        "partition_reads": 1,
+        "loaded_worlds": [
+          "921ba092613d"
+        ],
+        "output_sha256": "682e0fcdafa78ed086e42319e45eba379b0e0ae60cd1eb38b8ccf5e61cd00886"
+      }
+    },
+    {
+      "case": "larger-fifty",
+      "observation": {
+        "seconds": 1.5537280389980879,
+        "peak_rss_kib": 321848,
+        "partition_reads": 1,
+        "loaded_worlds": [
+          "5a6b6c4fde9b"
+        ],
+        "output_sha256": "703cd77fb3ad17d07fe923895380c1eef96bb260e049ec17777bc50e76aa831d"
+      }
+    },
+    {
+      "case": "multi-report",
+      "observation": {
+        "seconds": 0.26866971799972816,
+        "peak_rss_kib": 215340,
+        "partition_reads": 4,
+        "loaded_worlds": [
+          "0a5c741caf03",
+          "60b9e2a46dba",
+          "da88921106b8",
+          "e984fe1be980"
+        ],
+        "output_sha256": "9d5968ba6d44e2562cfb52eb25de33683c6c051d35db2a64f6fa9b9071c30c3d"
+      }
+    }
+  ]
+}

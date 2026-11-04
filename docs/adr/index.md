@@ -57,3 +57,4 @@ Each architecture decision record says what was decided, why, and what else was 
 | 0051 | [A version shows its personas its own description and price](0051-a-version-shows-its-own-description-and-price.md) |
 | 0052 | [A version is named outside its identity](0052-a-version-is-named-outside-its-identity.md) |
 | 0053 | [Objections are chosen from what turns recorded, and grouped by average linkage](0053-objections-are-chosen-from-what-turns-recorded-and-grouped-by-average-linkage.md) |
+| 0054 | [Finished-world analysis reuses a scoped trace snapshot](0054-finished-world-analysis-reuses-a-scoped-trace-snapshot.md) |

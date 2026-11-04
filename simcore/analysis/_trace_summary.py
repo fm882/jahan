@@ -11,6 +11,8 @@ one trace are identical, so a diff means a difference in the record.
 from __future__ import annotations
 
 import hashlib
+
+from simcore.trace.views import snapshot_scope
 from collections import Counter
 from collections.abc import Mapping
 
@@ -30,17 +32,33 @@ def trace_summary(views: Mapping[str, object], *, run_id: str, max_personas: int
     taken from the shape that owns it: counts and costs from `events`, histories
     from `beliefs`, edges from `edges`, groups from `verbatims`.
     """
-    per_world: list[WorldTraceSummary] = []
-    role_calls: dict[str, list] = {}
-    known_total = 0.0
-    unknown_calls = 0
-    hasher = hashlib.sha256()
-
+    builder = TraceSummaryBuilder(run_id=run_id, max_personas=max_personas)
     for world_id in sorted(views):
-        view = views[world_id]
+        with snapshot_scope(views[world_id]) as view:
+            builder.add_world(world_id, view)
+    return builder.finish()
+
+
+class TraceSummaryBuilder:
+    """Assemble a summary in world-ID order without retaining full trace events.
+
+    The live hash consumes the original serialized event stream, not per-world
+    hashes. Only derived shapes and small cost records survive each add call.
+    """
+
+    def __init__(self, *, run_id: str, max_personas: int = 50) -> None:
+        self._run_id = run_id
+        self._max_personas = max_personas
+        self._per_world: list[WorldTraceSummary] = []
+        self._role_calls: dict[str, list] = {}
+        self._hasher = hashlib.sha256()
+
+    def add_world(self, world_id: str, view) -> None:
+        if self._per_world and world_id <= self._per_world[-1].world_id:
+            raise ValueError("summary worlds must be added once in world-ID order")
         events = view.events(EventFilter())  # type: ignore[union-attr]
         for event in sorted(events, key=lambda e: (e.world_id, e.seq)):
-            hasher.update(event.model_dump_json().encode("utf-8"))
+            self._hasher.update(event.model_dump_json().encode("utf-8"))
 
         kinds = Counter(event.payload.kind for event in events)
         ticks = [event.tick for event in events]
@@ -49,7 +67,7 @@ def trace_summary(views: Mapping[str, object], *, run_id: str, max_personas: int
             event.persona_id for event in events
             if event.payload.kind == "belief_snapshot" and event.persona_id is not None
         )
-        chosen = sorted(snapshots, key=lambda pid: (-snapshots[pid], pid))[:max_personas]
+        chosen = sorted(snapshots, key=lambda pid: (-snapshots[pid], pid))[:self._max_personas]
         histories = tuple(view.beliefs(pid) for pid in chosen)  # type: ignore[union-attr]
 
         edges = view.edges()  # type: ignore[union-attr]
@@ -58,7 +76,7 @@ def trace_summary(views: Mapping[str, object], *, run_id: str, max_personas: int
             for grouping in VerbatimGrouping
         }
 
-        per_world.append(WorldTraceSummary.model_validate({
+        self._per_world.append(WorldTraceSummary.model_validate({
             "world_id": world_id,
             "event_counts": dict(kinds),
             "max_tick": max(ticks, default=0),
@@ -76,36 +94,40 @@ def trace_summary(views: Mapping[str, object], *, run_id: str, max_personas: int
                 continue
             record = event.payload  # CostRecorded
             role = record.role.value if hasattr(record.role, "value") else str(record.role)
-            role_calls.setdefault(role, []).append(record)
-
-    costs: list[CostByRole] = []
-    for role in sorted(role_calls):
-        records = role_calls[role]
-        known = [record.cost for record in records if record.cost is not None]
-        unknown = sum(1 for record in records if record.cost is None)
-        total = sum(known)
-        known_total += total
-        unknown_calls += unknown
-        costs.append(CostByRole.model_validate({
-            "role": role,
-            "calls": len(records),
-            "input_tokens": sum(record.input_tokens for record in records),
-            "output_tokens": sum(record.output_tokens for record in records),
-            # An unknown cost stays unknown rather than becoming zero: where every
-            # call billed unknown the role carries no cost at all.
-            "cost": total if unknown < len(records) else None,
-            "unknown_calls": unknown,
-        }))
-
-    return TraceSummary.model_validate({
-        "run_id": run_id,
-        "worlds": sorted(views),
-        "per_world": [world.model_dump(mode="json") for world in per_world],
-        "costs": [cost.model_dump(mode="json") for cost in costs],
-        "recorded_cost": known_total,
-        "unknown_cost_calls": unknown_calls,
-        "trace_hash": hasher.hexdigest(),
-    })
+            self._role_calls.setdefault(role, []).append(record)
 
 
-__all__ = ["trace_summary"]
+    def finish(self) -> TraceSummary:
+        known_total = 0.0
+        unknown_calls = 0
+        costs: list[CostByRole] = []
+        for role in sorted(self._role_calls):
+            records = self._role_calls[role]
+            known = [record.cost for record in records if record.cost is not None]
+            unknown = sum(1 for record in records if record.cost is None)
+            total = sum(known)
+            known_total += total
+            unknown_calls += unknown
+            costs.append(CostByRole.model_validate({
+                "role": role,
+                "calls": len(records),
+                "input_tokens": sum(record.input_tokens for record in records),
+                "output_tokens": sum(record.output_tokens for record in records),
+                # An unknown cost stays unknown rather than becoming zero: where every
+                # call billed unknown the role carries no cost at all.
+                "cost": total if unknown < len(records) else None,
+                "unknown_calls": unknown,
+            }))
+
+        return TraceSummary.model_validate({
+            "run_id": self._run_id,
+            "worlds": [world.world_id for world in self._per_world],
+            "per_world": [world.model_dump(mode="json") for world in self._per_world],
+            "costs": [cost.model_dump(mode="json") for cost in costs],
+            "recorded_cost": known_total,
+            "unknown_cost_calls": unknown_calls,
+            "trace_hash": self._hasher.hexdigest(),
+        })
+
+
+__all__ = ["trace_summary", "TraceSummaryBuilder"]

@@ -257,7 +257,8 @@ class TraceStore:
             if world_id not in worlds:
                 raise UnknownWorldError(f"{world_id} is not a world of run {run_id}")
             worlds = (world_id,)
-        if entry.status.value == "completed" and all(
+        finalized_world = world_id is not None and self.is_finalized(run_id, world_id)
+        if (entry.status.value == "completed" or finalized_world) and all(
             (self._world_dir(run_id, world) / "events.parquet").exists() for world in worlds
         ):
             return ParquetTraceView(self._root, run_id, worlds)

@@ -7,11 +7,13 @@ from ._findings import findings, ranking_findings, risk_findings
 from ._progress import WorldProgress, world_progress
 from ._spread import spread
 from ._trace_summary import trace_summary
+from ._study import analyze_record
 from ._trajectory import TrajectoryPoint, WorldTrajectories, trajectories
 from ._trust import trust_statement
 from ._workspace import WorkspaceSummary, run_started_at, workspace_summary
 
 __all__ = [
+    "analyze_record",
     "AnomalyReport",
     "AnomalyThresholds",
     "TrajectoryPoint",

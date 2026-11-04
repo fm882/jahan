@@ -266,3 +266,26 @@ def test_a_version_is_named_at_launch_renamed_later_and_no_identity_moves(tmp_pa
     assert [sc["label"] for sc in after["scenarios"]] == ["Launch name", "Premium $2.99"]
     assert after["world_ids"] == before["world_ids"] and after["config_hash"] == before["config_hash"]
     assert client.put(f"/api/runs/{RUN_ID}/labels", json={"scenario_hash": "0" * 64, "label": "x"}).status_code == 422
+
+
+def test_finished_summary_requests_share_scoped_reuse_without_cross_request_cache(tmp_path):
+    from unittest.mock import patch
+    from simcore.trace.finalize import read_finalized_events
+
+    store, entry, _ = _seed_run(tmp_path / 'runs')
+    world = store.world_ids(entry.config.run_id)[0]
+    store.finalize(world)
+    store.registry.update(entry.model_copy(update={'status': 'completed'}))
+    client = _client(tmp_path / 'runs')
+    url = f'/api/runs/{entry.config.run_id}/summary'
+    with patch('simcore.trace.finalize.read_finalized_events', wraps=read_finalized_events) as load:
+        first = client.get(url)
+        assert first.status_code == 200
+        assert load.call_count == 1
+        second = client.get(url)
+        assert second.json() == first.json()
+        assert load.call_count == 2
+        stored = tmp_path / 'runs' / entry.config.run_id / 'trace-summary.json'
+        stored.write_text(first.text)
+        assert client.get(url).json() == first.json()
+        assert load.call_count == 2

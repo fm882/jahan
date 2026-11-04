@@ -196,9 +196,13 @@ def filter_events(events: Sequence[TraceEvent], asked: EventFilter) -> tuple[Tra
     return tuple(sorted(kept, key=lambda e: (e.persona_id or "", e.tick, e.seq)))
 
 
-def resolve_events(events: Sequence[TraceEvent], trace_ids: Iterable[str]) -> tuple[TraceEvent, ...]:
+def resolve_events(
+    events: Sequence[TraceEvent], trace_ids: Iterable[str], *,
+    by_id: Mapping[str, TraceEvent] | None = None,
+) -> tuple[TraceEvent, ...]:
     """Exactly the events named, in the order asked; absent ids raise."""
-    by_id = {event.event_id: event for event in events}
+    if by_id is None:
+        by_id = {event.event_id: event for event in events}
     resolved: list[TraceEvent] = []
     missing: list[str] = []
     for trace_id in trace_ids:
