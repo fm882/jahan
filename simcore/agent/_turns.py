@@ -96,7 +96,7 @@ def turns(
     may still send the turn back, and only the recorded tick says what happened."""
     cfg = config or AgentConfig()
     cache = blocks if blocks is not None else PersonaBlockCache()
-    prepared = [_preflight(job, cfg, ontology, cache) for job in jobs]
+    prepared = [_preflight(job, ontology, cache) for job in jobs]
     queries = {
         position: [_stimulus_text(item.job, stimulus_texts)]
         for position, item in enumerate(prepared)
@@ -198,6 +198,7 @@ def _embed_memories(results, prepared, embed):
         if isinstance(outcome, CompletedTurn)
     }
     embedded = embed_texts(inputs, embed, scope=_embedding_scope(prepared, "memory"))
+    packed = {text: vector.astype("float32", copy=False).tobytes() for text, vector in embedded.vectors.items()}
     for position in inputs:
         item = prepared[position]
         item.costs.extend(embedded.costs[position])
@@ -207,7 +208,7 @@ def _embed_memories(results, prepared, embed):
         try:
             outcome = results[position]
             memories = tuple(memory.model_copy(update={
-                "embedding": embedded.vectors[memory.description].astype("float32").tobytes(),
+                "embedding": packed[memory.description],
                 "embed_model_id": embedded.models[memory.description],
             }) for memory in outcome.memories)
             results[position] = outcome.model_copy(update={"memories": memories, "costs": tuple(item.costs)})
@@ -351,7 +352,6 @@ class _Reacted:
 
 def _preflight(
     job: TurnJob,
-    cfg: AgentConfig,
     ontology: CategoryOntology | None,
     cache: PersonaBlockCache,
 ) -> _Prepared:
