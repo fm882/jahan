@@ -146,10 +146,13 @@ class CostAllocation(SimBaseModel):
 
 
 class CostRecorded(SimBaseModel):
-    """What one model call billed: the model the study pinned, the model that actually served it as the
-    response reported, which route served it, and where the cost came from. A cost nobody knows stays
-    absent rather than becoming zero; a cached call bills nothing. The runner appends this record to the
-    trace as-is, so cost has one source."""
+    """A model bill or an allocated share of it, with the pinned/served models and cost provenance.
+
+    Allocation metadata identifies the physical bill, its original totals and this job's estimated
+    share. The runner records shares as-is; original totals are reconciliation metadata, never extra
+    spend. Unknown prices remain absent; cache hits bill zero. Bills without allocation metadata
+    retain their original serialized shape, including when old traces are read again.
+    """
 
     kind: Literal["cost"]
     role: InferenceRole

@@ -31,7 +31,13 @@ class EmbedBatch:
 
 @dataclass(frozen=True)
 class EmbedResult:
-    """What one `embed` call produced: vectors in input order, the pinned and served model, and cost."""
+    """Vectors in input order, pinned/served models, and physical bills.
+
+    Multi-chunk implementations provide contiguous input ranges in `batches`, whose costs flatten
+    to `costs`. A simple single-request port may omit them; callers then treat its bills as one
+    aggregate over all submitted texts. Failing multi-chunk implementations retain available batch
+    bills on the raised exception so completed sibling work remains accountable.
+    """
 
     vectors: "np.ndarray"
     model_id: str
