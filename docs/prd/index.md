@@ -21,3 +21,4 @@ The product requirements each module was built from: the problem, the user stori
 | M13 | [PRD — M13 `web` and M14 `ui`: the engine with a face on it](M13-web-and-M14-ui.md) |
 | M15 | [PRD — M15 Channels and survey waves: information spreads the ways a study chooses, and intent is tracked](M15-channels-and-survey-waves.md) |
 | Optimization | [PRD — Finished-world trace reuse](finished-world-trace-reuse.md) |
+| Optimization | [PRD — Batched agent embeddings](batched-agent-embeddings.md) |
