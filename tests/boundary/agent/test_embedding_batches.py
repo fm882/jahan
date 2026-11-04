@@ -233,3 +233,37 @@ def test_reflections_share_one_memory_stage_without_merging_events(summary, expe
     assert len({memory.memory_id for outcome in outcomes for memory in outcome.memories}) == 4 * expected
     assert all(outcome.memories[0].source.value == "turn" for outcome in outcomes)
     assert all(memory.source.value == "reflection" for outcome in outcomes for memory in outcome.memories[1:])
+
+
+def test_failed_multi_chunk_retrieval_retains_successful_chunk_bills_on_affected_jobs():
+    import httpx
+    import json
+
+    def reply(request):
+        if json.loads(request.content)["input"] == ["bad"]:
+            return httpx.Response(503, content=b"unavailable")
+        return embed_reply(cost=0.03)(request)
+
+    client, _ = client_for(Recorder(reply), embeddings_batch_size=1, max_retries=0)
+    jobs = [history_job(0, 1), history_job(1, 2), make_job(2)]
+    outcomes = turns(jobs, chat=FakeChat(answering()), embed=client, config=quiet_config(),
+                     stimulus_texts={stimulus_id(1): "bad", stimulus_id(2): "good"})
+    assert isinstance(outcomes[0], TurnFailure)
+    assert isinstance(outcomes[1], TurnFailure)  # successful chunks are not partially usable
+    assert isinstance(outcomes[2], CompletedTurn)
+    assert not outcomes[0].costs
+    assert sum(cost.cost for cost in outcomes[1].costs) == 0.03
+    assert sum(cost.cost for cost in outcomes[2].costs) == 0.03
+
+
+def test_failed_reflection_call_uses_batched_fallback_memories():
+    from tests.boundary.agent.embedding_workload import CountingEmbed
+    from simcore.schemas import FailureKind
+
+    embed = CountingEmbed()
+    chat = FakeChat(answering(), failures={"persona_reflection": FailureKind.TIMED_OUT})
+    outcomes = turns([make_job(0), make_job(1)], chat=chat, embed=embed,
+                     config=replace(quiet_config(), reflection_interval=1))
+    assert len(embed.calls) == 1 and len(embed.calls[0]) == 2
+    assert all(isinstance(outcome, CompletedTurn) for outcome in outcomes)
+    assert all(outcome.memories[1].description.startswith("On reflection:") for outcome in outcomes)
