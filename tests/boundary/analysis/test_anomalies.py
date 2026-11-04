@@ -196,3 +196,23 @@ def test_the_digest_scalar_is_the_quantity_the_rule_reads():
     events = [_turn(0, 0, 0.2, 0.0), _turn(1, 1, -0.1, 0.1)]
     moves = signed_moves(events)
     assert [move for _, _, move in moves] == pytest.approx([0.1, 0.0])
+
+
+@pytest.mark.parametrize('replicate_spread', [None, 0.0, 0.05, 0.5])
+@pytest.mark.parametrize('adoption', [None, 0.10, 0.90])
+def test_prepared_evidence_preserves_rules_after_the_source_is_released(replicate_spread, adoption):
+    import gc
+    import weakref
+    from simcore.analysis._anomalies import prepare_anomalies, finish_anomalies
+
+    events = [_turn(2, 0, 0.2, intent=True), _turn(2, 1, -0.2),
+              _turn(3, 2, 0.3), _turn(3, 3, -0.3)]
+    view = _MovesView(events)
+    reference = weakref.ref(view)
+    digest = _unmeasured_digest() if adoption is None else _measured_digest(adoption)
+    expected = detect_anomalies(view, digest=digest, replicate_spread=replicate_spread)
+    inputs = prepare_anomalies(view)
+    del view, events
+    gc.collect()
+    assert reference() is None
+    assert finish_anomalies(inputs, digest=digest, replicate_spread=replicate_spread) == expected

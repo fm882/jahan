@@ -36,6 +36,27 @@ class AnomalyReport:
     unmeasured: tuple[UnmeasuredAnomaly, ...]
 
 
+@dataclass(frozen=True)
+class AnomalyInputs:
+    """Derived evidence sufficient for rules after the full trace is released."""
+
+    moves: tuple[tuple[int, str, float], ...]
+    scored_ids: tuple[str, ...]
+    last_turn_tick: int
+    first_event_id: str | None
+
+
+def prepare_anomalies(view) -> AnomalyInputs:
+    events = tuple(view.events(EventFilter()))
+    return AnomalyInputs(
+        moves=tuple(signed_moves(events)),
+        scored_ids=tuple(sorted(event.event_id for event in events
+                                if event.payload.kind == "turn" and event.payload.turn.reaction.intent is not None)),
+        last_turn_tick=max((event.tick for event in events if event.payload.kind == "turn"), default=0),
+        first_event_id=events[0].event_id if events else None,
+    )
+
+
 def detect_anomalies(
     view,
     *,
@@ -51,11 +72,21 @@ def detect_anomalies(
     `replicate_spread` is the spread between that scenario's worlds — never within-world
     variation — so an anomaly threshold is measured against what replicates disagreed on.
     """
+    if replicate_spread is not None and replicate_spread < 0:
+        raise ValueError(f"a replicate spread is a distance between worlds and is never negative, got {replicate_spread}")
+    return finish_anomalies(prepare_anomalies(view), digest=digest,
+                            replicate_spread=replicate_spread, thresholds=thresholds)
+
+
+def finish_anomalies(
+    inputs: AnomalyInputs, *, digest: OutcomeDigest, replicate_spread: float | None,
+    thresholds: AnomalyThresholds = AnomalyThresholds(),
+) -> AnomalyReport:
+    """Apply the same rules once the scenario's replicate spread is available."""
     scenario_hash = digest.scenario_hash
     if replicate_spread is not None and replicate_spread < 0:
         raise ValueError(f"a replicate spread is a distance between worlds and is never negative, got {replicate_spread}")
-    moves = _moves(view)
-    windows = _windows(moves, thresholds.window)
+    windows = _windows(inputs.moves, thresholds.window)
     anomalies: list[Anomaly] = []
     unmeasured: list[UnmeasuredAnomaly] = []
     herding, herding_unmeasured = _herding(
@@ -63,7 +94,7 @@ def detect_anomalies(
     anomalies.extend(herding)
     unmeasured.extend(herding_unmeasured)
     anomalies.extend(_backlash(windows, scenario_hash=scenario_hash, thresholds=thresholds))
-    flop, flop_unmeasured = _flop(view, scenario_hash=scenario_hash, digest=digest, thresholds=thresholds)
+    flop, flop_unmeasured = _flop(inputs, scenario_hash=scenario_hash, digest=digest, thresholds=thresholds)
     anomalies.extend(flop)
     unmeasured.extend(flop_unmeasured)
     return AnomalyReport(
@@ -72,12 +103,7 @@ def detect_anomalies(
     )
 
 
-def _moves(view) -> list[tuple[int, str, float]]:
-    """The signed move each turn and reflection recorded, from the one place it is computed."""
-    return signed_moves(view.events(EventFilter()))
-
-
-def _windows(moves: list[tuple[int, str, float]], window: int) -> dict[int, list[tuple[int, str, float]]]:
+def _windows(moves: tuple[tuple[int, str, float], ...], window: int) -> dict[int, list[tuple[int, str, float]]]:
     by_tick: dict[int, list[tuple[int, str, float]]] = {}
     for tick, event_id, move in moves:
         by_tick.setdefault(tick, []).append((tick, event_id, move))
@@ -150,7 +176,7 @@ def _backlash(windows: dict[int, list[tuple[int, str, float]]], *, scenario_hash
     return out
 
 
-def _flop(view, *, scenario_hash: str, digest: OutcomeDigest, thresholds: AnomalyThresholds):
+def _flop(inputs: AnomalyInputs, *, scenario_hash: str, digest: OutcomeDigest, thresholds: AnomalyThresholds):
     if digest.adoption is None:
         return [], [UnmeasuredAnomaly.model_validate({
             "kind": "flop",
@@ -160,13 +186,7 @@ def _flop(view, *, scenario_hash: str, digest: OutcomeDigest, thresholds: Anomal
         })]
     if digest.adoption >= thresholds.flop_adoption_floor:
         return [], []
-    events = tuple(view.events(EventFilter()))
-    scored = sorted(
-        event.event_id for event in events
-        if event.payload.kind == "turn" and event.payload.turn.reaction.intent is not None
-    )
-    ticks = [event.tick for event in events if event.payload.kind == "turn"]
-    evidence = scored or [event.event_id for event in events[:1]]
+    evidence = list(inputs.scored_ids) or ([inputs.first_event_id] if inputs.first_event_id else [])
     if not evidence:
         # An anomaly carries the records behind it; a view holding none cannot state one.
         return [], [UnmeasuredAnomaly.model_validate({
@@ -178,7 +198,7 @@ def _flop(view, *, scenario_hash: str, digest: OutcomeDigest, thresholds: Anomal
     return [Anomaly.model_validate({
         "kind": "flop",
         "scenario_hash": scenario_hash,
-        "tick": max(ticks) if ticks else 0,
+        "tick": inputs.last_turn_tick,
         "evidence_trace_ids": evidence,
         "threshold": thresholds.flop_adoption_floor,
         "observed": digest.adoption,
