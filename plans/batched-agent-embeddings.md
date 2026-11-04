@@ -4,7 +4,8 @@
 >
 > Status: five-phase breakdown approved by the user on 2026-11-04.
 > Implementation branch: `feat/batched-agent-embeddings`.
-> No implementation or live inference testing performed.
+> Phases 1–4 implemented and verified in small commits. Phase 5 is in progress:
+> local checks pass; repeated live Nova comparisons are running.
 
 ## Architectural decisions
 
@@ -44,9 +45,9 @@
   Timing, embedding grouping, cost allocations and resulting trace hashes can
   differ. Existing spend enforcement remains; savings may change where a
   cost-limited run stops.
-- **Delivery:** implementation happens on a new branch with one default path.
-  Remove superseded code after validation. This planning task does not authorize
-  implementation, live inference testing or a merge to master.
+- **Delivery:** the user authorized implementation after plan approval. Work stays
+  on the implementation branch with one default path. Remove superseded code
+  after validation. A merge to master is not part of implementation.
 - **Validation:** integrate deterministic boundary checks into each slice. Capture
   baseline fixtures before replacing behavior. Do not retain a second production
   turn path as an oracle or place network-latency thresholds in CI.
@@ -244,6 +245,12 @@ probes, multi-tick memory growth and reflection fallback.
 **User stories:** 1, 5, 8–14.
 
 **Depends on:** Phase 4 and the user's inference details for live testing.
+
+The user supplied AWS CLI credentials and the Nova embedding model, allowing any
+working region. A live smoke succeeded in us-east-1. Benchmarks use fixed chat
+replies to isolate embedding time. Nova's synchronous endpoint accepts one input;
+the benchmark-only bridge fans out independent inputs with the same concurrency
+ceiling and reports provider invocation counts separately from gateway requests.
 
 ### What to build
 
