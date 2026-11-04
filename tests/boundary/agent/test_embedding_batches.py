@@ -114,6 +114,8 @@ def quiet_config():
 
 def test_shared_retrieval_vector_preserves_private_prompts_and_recorded_costs():
     from simcore.runner._run import _turn_events
+    from simcore.trace.views import SnapshotTraceView
+    from simcore.analysis import trace_summary
 
     recorder = Recorder(embed_reply(cost=0.01))
     client, _ = client_for(recorder, embeddings_batch_size=1)
@@ -137,6 +139,10 @@ def test_shared_retrieval_vector_preserves_private_prompts_and_recorded_costs():
     assert sum(cost.cost for cost in embedded_costs) == pytest.approx(0.02)
     assert all(cost.allocation is not None for cost in embedded_costs)
     assert all(type(event).model_validate_json(event.model_dump_json()) == event for event in events)
+    summary = trace_summary({"a1b2c3d4e5f6": SnapshotTraceView(tuple(events))}, run_id="run-00000000000000000000000001")
+    embedded = next(cost for cost in summary.costs if cost.role == "embed")
+    assert embedded.calls == 2  # shared retrieval and shared memory, each billed once
+    assert embedded.cost == pytest.approx(0.02)
 
 
 def test_failed_retrieval_does_not_fail_jobs_without_retrieval_dependencies():

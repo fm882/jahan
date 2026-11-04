@@ -176,6 +176,21 @@ def test_malformed_billed_vectors_are_a_failure_with_their_cost_retained():
     assert raised.value.failure.costs[0].cost == 0.02
 
 
+def test_billed_retry_attempts_are_retained_on_eventual_success():
+    state = {"attempts": 0}
+
+    def reply(request):
+        state["attempts"] += 1
+        if state["attempts"] == 1:
+            return httpx.Response(503, json={"model": EMBED, "usage": {"prompt_tokens": 3, "cost": 0.01}})
+        return embed_reply(cost=0.02)(request)
+
+    client, _ = client_for(Recorder(reply), max_retries=1)
+    result = client.embed(["one"])
+    assert [cost.cost for cost in result.costs] == [0.01, 0.02]
+    assert result.batches[0].costs == result.costs
+
+
 def test_an_undeclared_embedding_model_is_a_pin_failure_not_a_different_space():
     recorder = Recorder(embed_reply(model="someone/else-large"))
     client, _ = client_for(recorder, max_retries=0)

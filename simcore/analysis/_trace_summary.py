@@ -51,6 +51,7 @@ class TraceSummaryBuilder:
         self._max_personas = max_personas
         self._per_world: list[WorldTraceSummary] = []
         self._role_calls: dict[str, list] = {}
+        self._role_bills: dict[str, list] = {}
         self._hasher = hashlib.sha256()
 
     def add_world(self, world_id: str, view) -> None:
@@ -89,12 +90,18 @@ class TraceSummaryBuilder:
             },
         }))
 
+        seen_bills = set()
         for event in events:
             if event.payload.kind != "cost":
                 continue
             record = event.payload  # CostRecorded
             role = record.role.value if hasattr(record.role, "value") else str(record.role)
             self._role_calls.setdefault(role, []).append(record)
+            allocation = record.allocation
+            if allocation is None or allocation.billing_id not in seen_bills:
+                self._role_bills.setdefault(role, []).append(record.cost if allocation is None else allocation.original_cost)
+                if allocation is not None:
+                    seen_bills.add(allocation.billing_id)
 
 
     def finish(self) -> TraceSummary:
@@ -104,18 +111,19 @@ class TraceSummaryBuilder:
         for role in sorted(self._role_calls):
             records = self._role_calls[role]
             known = [record.cost for record in records if record.cost is not None]
-            unknown = sum(1 for record in records if record.cost is None)
+            bills = self._role_bills[role]
+            unknown = sum(bill is None for bill in bills)
             total = sum(known)
             known_total += total
             unknown_calls += unknown
             costs.append(CostByRole.model_validate({
                 "role": role,
-                "calls": len(records),
+                "calls": len(bills),
                 "input_tokens": sum(record.input_tokens for record in records),
                 "output_tokens": sum(record.output_tokens for record in records),
                 # An unknown cost stays unknown rather than becoming zero: where every
                 # call billed unknown the role carries no cost at all.
-                "cost": total if unknown < len(records) else None,
+                "cost": total if unknown < len(bills) else None,
                 "unknown_calls": unknown,
             }))
 

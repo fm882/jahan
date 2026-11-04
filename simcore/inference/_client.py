@@ -318,6 +318,17 @@ class InferenceClient:
         return list(results)
 
     async def _embed_batch(self, batch: list[str], batch_context, role: InferenceRole) -> "EmbeddingResult":
+        billed = []
+        try:
+            return await self._embed_batch_impl(batch, batch_context, role, billed)
+        except Exception as error:
+            if isinstance(error, EmbeddingFailure):
+                error.failure = error.failure.model_copy(update={"costs": tuple(billed)})
+            else:
+                error.costs = tuple(billed)
+            raise
+
+    async def _embed_batch_impl(self, batch, batch_context, role, billed):
         pin = self.resolve(role)
         span, call_context = start_span("inference.embeddings", {GEN_AI_REQUEST_MODEL: pin.model_id, SIMCORE_BATCH_SIZE: len(batch)}, parent=batch_context, operation="embeddings", provider=self._tracer_provider)
         data = body_bytes(embeddings_body(batch, pin))
@@ -332,7 +343,6 @@ class InferenceClient:
             )
             return EmbeddingResult(vectors=vectors, model_id=pin.model_id, served_model_id=entry.get("served_model_id"), normalization=EMBEDDING_NORMALIZATION, dim=int(vectors.shape[1]), costs=(cost,))
         attempts = 0
-        billed = []
         oversized = float(sum(estimate_tokens(text) for text in batch))
         if not self._limiter.admissible(oversized):
             raise EmbeddingFailure(
@@ -404,12 +414,33 @@ class InferenceClient:
             return _Reply(CallFailure(kind=FailureKind.TIMED_OUT, detail="the embedding endpoint timed out", attempts=attempts, route=InferenceRoute.PRIMARY), retryable=True)
         except httpx.HTTPError as error:
             return _Reply(CallFailure(kind=FailureKind.FATAL_RESPONSE, detail=f"the embedding endpoint could not be reached: {error}", attempts=attempts, route=InferenceRoute.PRIMARY), retryable=True)
+
+        def failure(kind, detail, **kwargs):
+            try:
+                received = response.json()
+            except ValueError:
+                received = {}
+            received = received if isinstance(received, dict) else {}
+            usage = received.get("usage") if isinstance(received.get("usage"), dict) else {}
+            reported = _reported(usage.get("prompt_tokens"))
+            tokens = reported if reported is not None else sum(estimate_tokens(text) for text in batch)
+            costs = ()
+            if reported is not None or gateway_cost(received, response.headers) is not None:
+                costs = (CostRecorded(
+                    kind="cost", role=role, model_id=pin.model_id,
+                    served_model_id=received.get("model") if isinstance(received.get("model"), str) else pin.model_id,
+                    route=InferenceRoute.PRIMARY, input_tokens=tokens, output_tokens=0,
+                    **self._cost_fields(pin, received, response.headers, tokens, 0, usage_reported=reported is not None),
+                ),)
+            return _Reply(CallFailure(kind=kind, detail=detail, attempts=attempts,
+                                      route=InferenceRoute.PRIMARY, costs=costs), **kwargs)
+
         if response.status_code == 429:
-            return _Reply(CallFailure(kind=FailureKind.RATE_LIMITED, detail="the embedding endpoint rate limited the batch", attempts=attempts, route=InferenceRoute.PRIMARY), retryable=True, limited=True, wait_s=retry_after(response.headers))
+            return failure(FailureKind.RATE_LIMITED, "the embedding endpoint rate limited the batch", retryable=True, limited=True, wait_s=retry_after(response.headers))
         if response.status_code >= 400:
             fatal = response.status_code >= 500
-            return _Reply(
-                CallFailure(kind=FailureKind.FATAL_RESPONSE, detail=_refusal("the embedding endpoint", response), attempts=attempts, route=InferenceRoute.PRIMARY),
+            return failure(
+                FailureKind.FATAL_RESPONSE, _refusal("the embedding endpoint", response),
                 body=response.text,
                 retryable=fatal,
                 fatal_status=None if fatal else response.status_code,
@@ -417,19 +448,17 @@ class InferenceClient:
         try:
             payload = response.json()
         except ValueError:
-            return _Reply(CallFailure(kind=FailureKind.INVALID_OUTPUT, detail="the embedding endpoint answered with something that is not JSON", attempts=attempts, route=InferenceRoute.PRIMARY))
+            return failure(FailureKind.INVALID_OUTPUT, "the embedding endpoint answered with something that is not JSON")
+        if not isinstance(payload, dict):
+            return failure(FailureKind.INVALID_OUTPUT, "the embedding endpoint must return a JSON object")
         served = payload.get("model")
         if not isinstance(served, str) or served not in pin.serves:
-            return _Reply(
-                CallFailure(
-                    kind=FailureKind.PIN_FAILURE,
-                    detail=f"{pin.model_id!r} was served by {served!r}, which the embedding pin does not accept",
-                    attempts=attempts,
-                    route=InferenceRoute.PRIMARY,
-                )
+            return failure(
+                FailureKind.PIN_FAILURE,
+                f"{pin.model_id!r} was served by {served!r}, which the embedding pin does not accept",
             )
         if (drift := self._drift(pin, served)) is not None:
-            return _Reply(CallFailure(kind=FailureKind.PIN_FAILURE, detail=drift, attempts=attempts, route=InferenceRoute.PRIMARY))
+            return failure(FailureKind.PIN_FAILURE, drift)
         data_items = payload.get("data")
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
         reported_input = _reported(usage.get("prompt_tokens"))
@@ -446,14 +475,7 @@ class InferenceClient:
             if not vectors or not vectors[0] or any(len(vector) != len(vectors[0]) for vector in vectors) or not np.isfinite(vectors).all():
                 raise ValueError("embedding vectors must be finite, nonempty and of equal dimension")
         except (KeyError, TypeError, ValueError) as error:
-            cost = CostRecorded(
-                kind="cost", role=role,
-                model_id=pin.model_id, served_model_id=served,
-                route=InferenceRoute.PRIMARY, input_tokens=input_tokens, output_tokens=0,
-                **self._cost_fields(pin, payload, response.headers, input_tokens, 0, usage_reported=reported_input is not None),
-            )
-            return _Reply(CallFailure(kind=FailureKind.INVALID_OUTPUT, detail=str(error), attempts=attempts,
-                                      route=InferenceRoute.PRIMARY, costs=(cost,)))
+            return failure(FailureKind.INVALID_OUTPUT, str(error))
         return _Reply(EmbeddingVectors(vectors=vectors, served_model_id=served, input_tokens=input_tokens, payload=payload, headers=response.headers))
 
     async def aclose(self) -> None:
