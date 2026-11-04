@@ -23,8 +23,15 @@ def main():
     parser.add_argument("--ticks", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--delay-ms", type=float, default=2)
+    parser.add_argument("--live-nova", action="store_true", help="explicitly invoke the authorized Bedrock Nova model")
+    parser.add_argument("--region", default="us-east-1")
+    parser.add_argument("--workloads", nargs="+", choices=["empty", "repeated", "unique", "reflections", "simulation"],
+                        default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    args.workloads = args.workloads or (["simulation"] if args.live_nova else ["empty", "repeated", "unique", "reflections", "simulation"])
+    if args.live_nova and args.workloads != ["simulation"]:
+        parser.error("live Nova validation uses the simulation workload with memories grown from live embeddings")
     if not 20 <= args.personas <= 50 or args.ticks < 3 or args.repeats < 2 or args.delay_ms < 0:
         parser.error("use 20–50 personas, at least three ticks, two repetitions and nonnegative delay")
     sys.path.insert(0, str(args.source.resolve()))
@@ -42,7 +49,10 @@ def main():
     from tests.boundary.agent.support import answering, by_template, make_job, memory_dict, reflecting
     from tests.study_builders import persona_payload, population_payload, run_config_payload, scenario_payload, stimulus_id, with_derived_hashes
 
-    model = "benchmark/embed"
+    if args.live_nova:
+        # This helper belongs to the harness, even when --source selects old code.
+        from bedrock_nova import MODEL, embeddings as nova_embeddings
+    model = MODEL if args.live_nova else "benchmark/embed"
     pins = ModelPins.model_validate({"tier_a": "fake/chat", "tier_b": "fake/chat", "embed": model})
     settings = {
         "base_url": "http://offline-benchmark.test/v1", "max_concurrency": 16,
@@ -56,12 +66,22 @@ def main():
     def execute(kind, cache_dir):
         metrics = {"port_invocations": 0, "submitted_texts": 0, "upstream_requests": 0,
                    "upstream_tokens": 0, "billed_cost": 0.0, "allocated_cost": 0.0,
+                   "gateway_requests": 0, "unknown_allocated_cost_records": 0,
                    "preparation_seconds": 0.0, "chat_seconds": 0.0, "finalization_seconds": 0.0}
 
         async def handler(request):
             body = json.loads(request.content)
-            await asyncio.sleep(args.delay_ms / 1000)
             texts = body["input"]
+            metrics["gateway_requests"] += 1
+            if args.live_nova:
+                metrics["upstream_requests"] += len(texts)
+                vectors = await nova_embeddings(texts, region=args.region, concurrency=settings["max_concurrency"])
+                # InvokeModel does not report monetary cost or token counts here.
+                # Omitting usage lets inference identify token estimates and unknown prices.
+                return httpx.Response(200, json={"model": model, "data": [
+                    {"index": i, "embedding": vector} for i, vector in enumerate(vectors)
+                ]})
+            await asyncio.sleep(args.delay_ms / 1000)
             tokens = sum(max(1, len(text) // 4) for text in texts)
             cost = tokens * 0.000001
             metrics["upstream_requests"] += 1
@@ -110,6 +130,7 @@ def main():
             metrics["finalization_seconds"] += ended - (chat.last or ended)
             content.extend(outcome.model_dump(mode="json", exclude={"costs"}) for outcome in outcomes)
             metrics["allocated_cost"] += sum(cost.cost or 0 for outcome in outcomes for cost in outcome.costs)
+            metrics["unknown_allocated_cost_records"] += sum(cost.cost is None for outcome in outcomes for cost in outcome.costs)
             assert all(isinstance(outcome, CompletedTurn) for outcome in outcomes), outcomes
             return outcomes
 
@@ -136,7 +157,7 @@ def main():
             raw["communities"] = [{"community_id": "benchmark", "member_ids": ids}]
             population = Population.model_validate(with_derived_hashes(raw))
             pack = population.pack
-            scenario = scenario_payload(horizon_ticks=args.ticks, interventions=[])
+            scenario = scenario_payload(horizon_ticks=args.ticks, interventions=[], channels=["forum"])
             run_config = RunConfig.model_validate(run_config_payload(
                 scenarios=[scenario], seeds=[4021], pins=pins.model_dump(mode="json"),
                 brief_hash=canonical_hash(pack.brief), ontology_hash=canonical_hash(pack.ontology),
@@ -161,6 +182,8 @@ def main():
             state_hash = digest([event.payload.model_dump(mode="json") for event in events
                                  if event.payload.kind in {"memory", "belief_snapshot"}])
             metrics["trace_events"] = len(events)
+            metrics["memory_events"] = sum(event.payload.kind == "memory" for event in events)
+            assert metrics["memory_events"] > args.personas  # survey-only runs do not grow memory
         else:
             states = {}
             started = perf_counter()
@@ -183,12 +206,16 @@ def main():
             state_hash = digest([state.model_dump(mode="json") for state in states.values()])
         metrics.update(cache_hits=client.stats.cache_hits, content_hash=digest(content),
                        prompts_hash=digest(sorted(chat.calls)), state_hash=state_hash)
-        assert abs(metrics["allocated_cost"] - metrics["billed_cost"]) < 1e-9
+        if args.live_nova:
+            metrics["billed_cost"] = None
+            metrics["upstream_tokens"] = None
+        else:
+            assert abs(metrics["allocated_cost"] - metrics["billed_cost"]) < 1e-9
         asyncio.run(client.aclose())
         return metrics
 
     results = {}
-    for kind in ("empty", "repeated", "unique", "reflections", "simulation"):
+    for kind in args.workloads:
         results[kind] = {}
         for cache in ("cold", "warm"):
             samples = []
@@ -205,11 +232,13 @@ def main():
                 "max_seconds": max(sample["simulation_seconds"] for sample in samples),
             }
     output = {
-        "inference": "offline HTTP mock; deterministic vectors and fixed chat responses; no network",
+        "inference": ("live AWS Nova embeddings via AWS CLI; fixed chat replies; per-text provider calls"
+                      if args.live_nova else "offline HTTP mock; deterministic vectors and fixed chat responses; no network"),
         "source": str(args.source.resolve()), "personas": args.personas, "ticks": args.ticks,
         "revision": args.revision, "python_version": sys.version,
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "model_pins": pins.model_dump(mode="json"),
+        "region": args.region if args.live_nova else None,
         "repeats": args.repeats, "mock_request_delay_ms": args.delay_ms, "settings": settings,
         "results": results,
     }
