@@ -7,6 +7,8 @@ x relevance and takes the top-k per tier into the assembled context.
 
 import json
 
+import pytest
+
 from simcore.agent import AgentConfig, importance_of, retrieve, turns
 from simcore.agent._memory import belief_magnitude
 from simcore.ports.fake import FakeChat, FakeEmbed
@@ -21,6 +23,29 @@ from simcore.schemas import (
 
 from .support import DictEmbed, answering, job_payload, make_job, memory_dict
 from simcore.schemas.sim import unpack_vector
+
+
+@pytest.mark.parametrize("k,with_vector", [(0, True), (-1, True), (3, False)])
+def test_retrieval_skips_embeddings_that_cannot_affect_selection(k, with_vector):
+    class NoCalls:
+        def embed(self, texts):
+            raise AssertionError("query embedding cannot affect this retrieval")
+
+    memory = MemoryEvent.model_validate(memory_dict(1, 0, "private", embedding=[1.0, 0.0] if with_vector else None))
+    recalled = retrieve([memory], stimulus_text="query", tick=1, k=k, tau_r=10, embed=NoCalls())
+    assert recalled == ((memory,) if k > 0 else ())
+
+
+def test_two_hundred_empty_personas_do_not_embed_retrieval_queries():
+    from tests.boundary.agent.embedding_workload import CountingEmbed
+
+    embed = CountingEmbed()
+    outcomes = turns([make_job(index) for index in range(200)],
+                     chat=FakeChat(answering()), embed=embed,
+                     config=AgentConfig(reflection_interval=100, reflection_jitter=0, probe_share=0))
+    assert all(isinstance(outcome, CompletedTurn) for outcome in outcomes)
+    assert embed.calls  # new turn memories still need embeddings
+    assert all(text.startswith("comment on ") for call in embed.calls for text in call)
 
 
 def state_with_memories(payload: dict, memories: list[dict]) -> dict:

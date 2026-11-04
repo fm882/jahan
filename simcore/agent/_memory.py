@@ -126,8 +126,10 @@ def retrieve(
     The caller passes one persona's memories; scoring cannot reach anything else. The
     stimulus is embedded once per call, and no stored memory is ever re-embedded.
     """
+    if not memories or k <= 0:
+        return ()
     stimulus_vector = None
-    if embed is not None:
+    if embed is not None and any(memory.embedding is not None for memory in memories):
         result = embed.embed([stimulus_text])
         stimulus_vector = np.asarray(result.vectors[0], dtype=np.float64)
         if costs is not None:

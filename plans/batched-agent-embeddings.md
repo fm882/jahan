@@ -75,19 +75,22 @@ a separate infrastructure-only phase.
 
 ### Acceptance criteria
 
-- [ ] Baseline revision, controlled inputs and comparison artifacts are recorded;
+- [x] Baseline revision, controlled inputs and comparison artifacts are recorded;
       unrelated workspace changes remain outside the implementation.
-- [ ] A batch of 200 eligible personas with empty memories makes zero retrieval
+- [x] A batch of 200 eligible personas with empty memories makes zero retrieval
       embedding-port calls. Count new-memory embeddings separately.
-- [ ] Zero retrieval count and memories without vectors avoid query embedding
+- [x] Zero retrieval count and memories without vectors avoid query embedding
       without changing the returned memory selection.
-- [ ] Retrieval ordering, prompts, reactions and memory events match baseline
+- [x] Retrieval ordering, prompts, reactions and memory events match baseline
       fixtures using deterministic responses; no-embedding operation still works.
-- [ ] Empty jobs, single jobs, mixed tiers and existing early refusals retain
+- [x] Empty jobs, single jobs, mixed tiers and existing early refusals retain
       their outcome ordering and behavior.
-- [ ] No new configuration, external service access or persistent cache is needed.
+- [x] No new configuration, external service access or persistent cache is needed.
 
 ---
+
+Evidence: deterministic baseline captured at revision `7d757cc`; agent boundary
+and contract checks pass (131 tests). No network inference was used.
 
 ## Phase 2: Complete turns with deduplicated retrieval embeddings
 
