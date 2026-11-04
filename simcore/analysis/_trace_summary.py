@@ -11,6 +11,8 @@ one trace are identical, so a diff means a difference in the record.
 from __future__ import annotations
 
 import hashlib
+
+from simcore.trace.views import snapshot_scope
 from collections import Counter
 from collections.abc import Mapping
 
@@ -37,46 +39,46 @@ def trace_summary(views: Mapping[str, object], *, run_id: str, max_personas: int
     hasher = hashlib.sha256()
 
     for world_id in sorted(views):
-        view = views[world_id]
-        events = view.events(EventFilter())  # type: ignore[union-attr]
-        for event in sorted(events, key=lambda e: (e.world_id, e.seq)):
-            hasher.update(event.model_dump_json().encode("utf-8"))
+        with snapshot_scope(views[world_id]) as view:
+            events = view.events(EventFilter())  # type: ignore[union-attr]
+            for event in sorted(events, key=lambda e: (e.world_id, e.seq)):
+                hasher.update(event.model_dump_json().encode("utf-8"))
 
-        kinds = Counter(event.payload.kind for event in events)
-        ticks = [event.tick for event in events]
+            kinds = Counter(event.payload.kind for event in events)
+            ticks = [event.tick for event in events]
 
-        snapshots: Counter[str] = Counter(
-            event.persona_id for event in events
-            if event.payload.kind == "belief_snapshot" and event.persona_id is not None
-        )
-        chosen = sorted(snapshots, key=lambda pid: (-snapshots[pid], pid))[:max_personas]
-        histories = tuple(view.beliefs(pid) for pid in chosen)  # type: ignore[union-attr]
+            snapshots: Counter[str] = Counter(
+                event.persona_id for event in events
+                if event.payload.kind == "belief_snapshot" and event.persona_id is not None
+            )
+            chosen = sorted(snapshots, key=lambda pid: (-snapshots[pid], pid))[:max_personas]
+            histories = tuple(view.beliefs(pid) for pid in chosen)  # type: ignore[union-attr]
 
-        edges = view.edges()  # type: ignore[union-attr]
-        groups = {
-            grouping.value: view.verbatims(grouping)  # type: ignore[union-attr]
-            for grouping in VerbatimGrouping
-        }
+            edges = view.edges()  # type: ignore[union-attr]
+            groups = {
+                grouping.value: view.verbatims(grouping)  # type: ignore[union-attr]
+                for grouping in VerbatimGrouping
+            }
 
-        per_world.append(WorldTraceSummary.model_validate({
-            "world_id": world_id,
-            "event_counts": dict(kinds),
-            "max_tick": max(ticks, default=0),
-            "belief_total_personas": len(snapshots),
-            "belief_histories": [history.model_dump(mode="json") for history in histories],
-            "edges": [edge.model_dump(mode="json") for edge in edges],
-            "verbatim_groups": {
-                name: [group.model_dump(mode="json") for group in grouping_groups]
-                for name, grouping_groups in groups.items()
-            },
-        }))
+            per_world.append(WorldTraceSummary.model_validate({
+                "world_id": world_id,
+                "event_counts": dict(kinds),
+                "max_tick": max(ticks, default=0),
+                "belief_total_personas": len(snapshots),
+                "belief_histories": [history.model_dump(mode="json") for history in histories],
+                "edges": [edge.model_dump(mode="json") for edge in edges],
+                "verbatim_groups": {
+                    name: [group.model_dump(mode="json") for group in grouping_groups]
+                    for name, grouping_groups in groups.items()
+                },
+            }))
 
-        for event in events:
-            if event.payload.kind != "cost":
-                continue
-            record = event.payload  # CostRecorded
-            role = record.role.value if hasattr(record.role, "value") else str(record.role)
-            role_calls.setdefault(role, []).append(record)
+            for event in events:
+                if event.payload.kind != "cost":
+                    continue
+                record = event.payload  # CostRecorded
+                role = record.role.value if hasattr(record.role, "value") else str(record.role)
+                role_calls.setdefault(role, []).append(record)
 
     costs: list[CostByRole] = []
     for role in sorted(role_calls):

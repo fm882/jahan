@@ -4,7 +4,7 @@
 >
 > Decision: [ADR 0054](../docs/adr/0054-finished-world-analysis-reuses-a-scoped-trace-snapshot.md)
 >
-> Four-phase breakdown approved 2026-11-04. Implementation not started.
+> Four-phase breakdown approved 2026-11-04. Implementation in progress.
 
 ## Architectural decisions
 
@@ -52,22 +52,22 @@ until Phase 2, without acquiring an unbounded collection of cached views.
 
 ### Acceptance criteria
 
-- [ ] A single-world summary matches the baseline serialized JSON, including
+- [x] A single-world summary matches the baseline serialized JSON, including
       trace hash, costs, grouped verbatims and chosen belief histories.
-- [ ] CLI and HTTP entry points use the same implementation without new flags,
+- [x] CLI and HTTP entry points use the same implementation without new flags,
       response fields or frontend workflow changes.
-- [ ] Summary generation, including repeated histories and evidence queries,
+- [x] Summary generation, including repeated histories and evidence queries,
       causes one full partition load during the operation.
-- [ ] Persona and kind queries use indexed candidates; evidence resolution
+- [x] Persona and kind queries use indexed candidates; evidence resolution
       uses indexed IDs. Preserve ordering, duplicates, missing-ID errors,
       intersecting filters, empty results and null-persona behavior.
-- [ ] Edges and verbatims retain linked-stimulus context and match baseline
+- [x] Edges and verbatims retain linked-stimulus context and match baseline
       results. Existing derivation logic remains shared.
-- [ ] Migration, invalid-partition failures and newer-version refusal retain
+- [x] Migration, invalid-partition failures and newer-version refusal retain
       their existing behavior; snapshots are built only after successful loading.
-- [ ] A subsequent operation has its own lifetime; no snapshot persists as a
+- [x] A subsequent operation has its own lifetime; no snapshot persists as a
       cache across HTTP requests. Exception cleanup releases snapshot ownership.
-- [ ] Existing live reads and multi-world behavior remain correct.
+- [x] Existing live reads and multi-world behavior remain correct.
 
 ---
 
@@ -185,3 +185,14 @@ this phase completes the comparative measurements and their write-up.
 - [ ] Run the relevant trace, analysis, report, CLI and web regression checks.
 - [ ] Publish measured scope and limitations without promising a universal
       10.9x speedup or an end-to-end simulation speedup.
+
+
+## Verification log
+
+- Phase 1: 44 passing checks across snapshot, migration, finalization, summary,
+  HTTP and query-property suites. One unrelated web test expects the removed
+  `/api/briefs` route; its failure was reproduced on baseline commit `5e7b06b`.
+- Local test prerequisites: the checkout lacks the beverage ontology and protein
+  water example used by existing tests. Restored local copies from the parents
+  of removal commits `7295ef7` and `8957bd7`; these are not production changes
+  and are not included in implementation commits.
