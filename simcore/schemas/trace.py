@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from typing import Annotated, Any, Literal, NamedTuple, Self
 
-from pydantic import Field, StringConstraints, computed_field, model_validator
+from pydantic import Field, StringConstraints, computed_field, model_serializer, model_validator
 
 from . import base
 from .base import (
@@ -127,11 +127,32 @@ class ProbeRecorded(SimBaseModel):
     result: ProbeResult
 
 
+class CostAllocation(SimBaseModel):
+    """Non-additive original bill and a job's exact estimated share of it."""
+
+    billing_id: Identifier
+    method: Literal["estimated_tokens"] = "estimated_tokens"
+    numerator: NonNegativeInt
+    denominator: Annotated[int, Field(gt=0)]
+    original_input_tokens: NonNegativeInt
+    original_output_tokens: NonNegativeInt
+    original_cost: Annotated[float, Field(ge=0.0)] | None
+
+    @model_validator(mode="after")
+    def _share_is_at_most_the_bill(self) -> Self:
+        if self.numerator > self.denominator:
+            raise ValueError("an allocated share cannot exceed its original bill")
+        return self
+
+
 class CostRecorded(SimBaseModel):
-    """What one model call billed: the model the study pinned, the model that actually served it as the
-    response reported, which route served it, and where the cost came from. A cost nobody knows stays
-    absent rather than becoming zero; a cached call bills nothing. The runner appends this record to the
-    trace as-is, so cost has one source."""
+    """A model bill or an allocated share of it, with the pinned/served models and cost provenance.
+
+    Allocation metadata identifies the physical bill, its original totals and this job's estimated
+    share. The runner records shares as-is; original totals are reconciliation metadata, never extra
+    spend. Unknown prices remain absent; cache hits bill zero. Bills without allocation metadata
+    retain their original serialized shape, including when old traces are read again.
+    """
 
     kind: Literal["cost"]
     role: InferenceRole
@@ -142,9 +163,24 @@ class CostRecorded(SimBaseModel):
     input_tokens: NonNegativeInt
     output_tokens: NonNegativeInt
     cost: Annotated[float, Field(ge=0.0)] | None = None
+    # Omit absent allocation metadata, preserving old event serialization/hashes.
+    allocation: CostAllocation | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_allocation(self, serialize):
+        # Use the serializer supported by the project's existing Pydantic minimum.
+        data = serialize(self)
+        if self.allocation is None:
+            data.pop("allocation", None)
+        return data
 
     @model_validator(mode="after")
     def _cost_states_its_source(self) -> Self:
+        if self.allocation is not None:
+            if (self.cost is None) != (self.allocation.original_cost is None):
+                raise ValueError("allocated costs preserve whether the original bill was priced")
+            if self.cost is not None and self.cost > self.allocation.original_cost:
+                raise ValueError("an allocated cost cannot exceed its original bill")
         if (self.cost is None) != (self.cost_source is CostSource.UNKNOWN):
             raise ValueError(
                 f"an unknown cost is recorded as absent and a known cost names its source, but this record "

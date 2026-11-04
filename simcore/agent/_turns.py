@@ -50,11 +50,12 @@ from ._beliefs import (
     split_summary,
 )
 from ._config import AgentConfig
+from ._embedding import embed_texts
 from ._context import AssembledContext, ContextBudgetExceeded, assemble, render_beliefs, render_shown
 from ._guard import allowed_stimuli, check, strict_question
 from ._ids import memory_id, reaction_id
 from ._intent import PURCHASE_CONSTRUCT, score_intents, wants_intent
-from ._memory import describe_turn, importance_of, retrieve, write_memory
+from ._memory import describe_turn, importance_of, needs_query, retrieve, write_memory
 from ._parse import ParsedReaction, parse_reaction, parse_reflection
 from ._probe import (
     disagreement_rate,  # noqa: F401  (re-exported for the report path)
@@ -95,7 +96,23 @@ def turns(
     may still send the turn back, and only the recorded tick says what happened."""
     cfg = config or AgentConfig()
     cache = blocks if blocks is not None else PersonaBlockCache()
-    prepared = [_prepare(job, cfg, ontology, cache, embed, stimulus_texts) for job in jobs]
+    prepared = [_preflight(job, ontology, cache) for job in jobs]
+    queries = {
+        position: [_stimulus_text(item.job, stimulus_texts)]
+        for position, item in enumerate(prepared)
+        if item.early is None and needs_query(item.job.state.memories, cfg.top_k[cfg.tier_for(item.job.task)])
+    } if embed is not None else {}
+    recalled = embed_texts(queries, embed, scope=_embedding_scope(prepared, "retrieval"))
+    for position, item in enumerate(prepared):
+        item.costs.extend(recalled.costs.get(position, ()))
+        if position in queries and recalled.error is not None:
+            item.early = _embedding_failure(item, recalled.error, "retrieval")
+        if item.early is None:
+            text = queries[position][0] if position in queries else None
+            try:
+                prepared[position] = _prepare(item, cfg, stimulus_texts, recalled.vectors.get(text))
+            except Exception as error:  # one outcome per job, including invalid stored vectors
+                item.early = _embedding_failure(item, error, "preparation")
     listen = None if on_decision is None else (lambda position, outcome: _announce(prepared[position].job, outcome, on_decision))
     first = _dispatch(chat, [(position, item.request) for position, item in enumerate(prepared) if item.request is not None], listen)
     for position, item in enumerate(prepared):
@@ -152,7 +169,6 @@ def turns(
                         intents.get(position),
                         probe_by_position.get(position),
                         cfg,
-                        embed,
                     )
                 )
             except Exception as error:  # noqa: BLE001 — one outcome per job, whatever happened (ADR 0031)
@@ -169,7 +185,40 @@ def turns(
                         costs=tuple(entry.item.costs),
                     )
                 )
+    return _embed_memories(results, prepared, embed)
+
+
+def _embed_memories(results, prepared, embed):
+    """Attach shared vectors to separate memory events, retaining each job's bill."""
+    if embed is None:
+        return tuple(results)
+    inputs = {
+        position: [memory.description for memory in outcome.memories]
+        for position, outcome in enumerate(results)
+        if isinstance(outcome, CompletedTurn)
+    }
+    embedded = embed_texts(inputs, embed, scope=_embedding_scope(prepared, "memory"))
+    packed = {text: vector.astype("float32", copy=False).tobytes() for text, vector in embedded.vectors.items()}
+    for position in inputs:
+        item = prepared[position]
+        item.costs.extend(embedded.costs[position])
+        if embedded.error is not None:
+            results[position] = _embedding_failure(item, embedded.error, "memory")
+            continue
+        try:
+            outcome = results[position]
+            memories = tuple(memory.model_copy(update={
+                "embedding": packed[memory.description],
+                "embed_model_id": embedded.models[memory.description],
+            }) for memory in outcome.memories)
+            results[position] = outcome.model_copy(update={"memories": memories, "costs": tuple(item.costs)})
+        except Exception as error:
+            results[position] = _embedding_failure(item, error, "memory finalization")
     return tuple(results)
+
+
+def _embedding_scope(prepared, stage):
+    return stage + "|" + "|".join(item.job.presentation.impression.impression_id for item in prepared)
 
 
 def _bill(item: _Prepared, outcome: Completion | CallFailure | None) -> None:
@@ -301,16 +350,12 @@ class _Reacted:
     failure: TurnFailure | None = None
 
 
-def _prepare(
+def _preflight(
     job: TurnJob,
-    cfg: AgentConfig,
     ontology: CategoryOntology | None,
     cache: PersonaBlockCache,
-    embed,
-    stimulus_texts: Mapping[str, str] | None,
 ) -> _Prepared:
     impression = job.presentation.impression
-    spent: list = []
     if ontology is None:
         block = render_persona_block(job.persona.conditioning, job.persona.attributes)
         block_hash = hash_text(block)
@@ -346,6 +391,23 @@ def _prepare(
             ),
             block,
         )
+    return _Prepared(job, None, block_hash, (), None, block)
+
+
+def _embedding_failure(item: _Prepared, error: Exception, stage: str) -> TurnFailure:
+    return TurnFailure(
+        persona_id=item.job.persona.persona_id,
+        impression_id=item.job.presentation.impression.impression_id,
+        kind=TurnFailureKind.CALL_FAILED,
+        detail=f"the {stage} embeddings failed: {type(error).__name__}: {error}",
+        costs=tuple(item.costs),
+    )
+
+
+def _prepare(item: _Prepared, cfg: AgentConfig, stimulus_texts, stimulus_vector) -> _Prepared:
+    job = item.job
+    impression = job.presentation.impression
+    block, block_hash, spent = item.persona_block, item.persona_block_hash, item.costs
     beliefs = job.state.beliefs
     beliefs_text = render_beliefs(
         {dim.value: value for dim, value in beliefs.dimensions.items()},
@@ -359,8 +421,7 @@ def _prepare(
         tick=impression.tick,
         k=cfg.top_k[tier],
         tau_r=tau_r,
-        embed=embed,
-        costs=spent,
+        stimulus_vector=stimulus_vector,
     )
     memory_texts = tuple(f"[tick {memory.tick}] {memory.description}" for memory in recalled)
     memory_ids = tuple(memory.memory_id for memory in recalled)
@@ -549,7 +610,7 @@ def _reflection_request(entry: _Reacted, cfg: AgentConfig) -> ChatRequest:
 
 
 def _reflection_memories(
-    entry: _Reacted, answer: Completion | CallFailure | None, tick: int, embed
+    entry: _Reacted, answer: Completion | CallFailure | None, tick: int
 ) -> tuple[BeliefChange, tuple[MemoryEvent, ...]]:
     """The reflection's revision and its consolidated memories — or the rule-based fallback."""
     assert isinstance(entry.outcome, Completion) and entry.parsed is not None
@@ -568,8 +629,6 @@ def _reflection_memories(
                     description=sentence,
                     importance=CONSOLIDATED_IMPORTANCE,
                     source=MemorySource.REFLECTION,
-                    embed=embed,
-                    costs=entry.item.costs,
                 )
                 for index, sentence in enumerate(split_summary(parsed.summary))
             )
@@ -581,8 +640,6 @@ def _reflection_memories(
         description=f"On reflection: {describe_turn(action, subject, verbatim)}",
         importance=CONSOLIDATED_IMPORTANCE,
         source=MemorySource.REFLECTION,
-        embed=embed,
-        costs=entry.item.costs,
     )
     return BeliefChange(), (fallback,)
 
@@ -600,7 +657,6 @@ def _finalize(
     intent: SsrOutcome | None,
     probed: _Probed | None,
     cfg: AgentConfig,
-    embed,
 ) -> TurnOutcome:
     if entry.failure is not None:
         return entry.failure
@@ -611,7 +667,7 @@ def _finalize(
     if answer is None:
         revision, consolidated = BeliefChange(), ()
     else:
-        revision, consolidated = _reflection_memories(entry, answer, tick, embed)
+        revision, consolidated = _reflection_memories(entry, answer, tick)
     change = combine(entry.parsed.belief_change, revision)
     if cfg.tier_for(job.task) is InferenceRole.TIER_B and entry.parsed.importance is not None:
         importance = entry.parsed.importance
@@ -637,8 +693,6 @@ def _finalize(
         description=describe_turn(action, subject, verbatim),
         importance=importance,
         source=MemorySource.TURN,
-        embed=embed,
-        costs=entry.item.costs,
     )
     completed = CompletedTurn(
         turn=turn,

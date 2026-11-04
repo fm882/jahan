@@ -22,7 +22,7 @@ def job_payload(persona_index: int = 0, tick: int = 3, n: int = 0, **overrides) 
     whole = turn_payload(persona_id, tick, shown, {}, None, n)
     payload = {
         "persona": persona_payload(
-            persona_index,
+            persona_index % len(DISTINCT_AGES),
             persona_id=persona_id,
             conditioning={
                 "age": DISTINCT_AGES[persona_index % len(DISTINCT_AGES)],

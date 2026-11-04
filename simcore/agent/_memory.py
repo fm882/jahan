@@ -120,14 +120,18 @@ def retrieve(
     tau_r: float,
     embed=None,
     costs: list | None = None,
+    stimulus_vector: np.ndarray | None = None,
 ) -> tuple[MemoryEvent, ...]:
     """The k most relevant of the given memories — the persona's own, never another's.
 
     The caller passes one persona's memories; scoring cannot reach anything else. The
     stimulus is embedded once per call, and no stored memory is ever re-embedded.
     """
-    stimulus_vector = None
-    if embed is not None:
+    if not memories or k <= 0:
+        return ()
+    if stimulus_vector is not None:
+        stimulus_vector = np.asarray(stimulus_vector, dtype=np.float64)
+    elif embed is not None and needs_query(memories, k):
         result = embed.embed([stimulus_text])
         stimulus_vector = np.asarray(result.vectors[0], dtype=np.float64)
         if costs is not None:
@@ -138,6 +142,11 @@ def retrieve(
         reverse=True,
     )
     return tuple(ranked[: max(0, k)])
+
+
+def needs_query(memories: Sequence[MemoryEvent], k: int) -> bool:
+    """Whether a query vector can affect this persona's retrieval."""
+    return k > 0 and any(memory.embedding is not None for memory in memories)
 
 
 def append_memories(state: PersonaState, new: Sequence[MemoryEvent]) -> PersonaState:

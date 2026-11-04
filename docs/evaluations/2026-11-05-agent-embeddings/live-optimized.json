@@ -1,0 +1,152 @@
+{
+  "inference": "live AWS Nova embeddings via AWS CLI; fixed chat replies; per-text provider calls",
+  "source": "/home/faishal/jahan_sim/sim_engine",
+  "personas": 20,
+  "ticks": 3,
+  "revision": "7de727f",
+  "python_version": "3.13.5 (main, Jul 23 2025, 00:37:22) [Clang 20.1.4 ]",
+  "harness_sha256": "46125233c4f3f27363f3ab5a1d6c0d01c72ce86e859c04f3f123542a2e25564a",
+  "model_pins": {
+    "tier_a": {
+      "model_id": "fake/chat",
+      "serves": [
+        "fake/chat"
+      ],
+      "structured_output": false,
+      "honours_seed": false,
+      "price": null
+    },
+    "tier_b": {
+      "model_id": "fake/chat",
+      "serves": [
+        "fake/chat"
+      ],
+      "structured_output": false,
+      "honours_seed": false,
+      "price": null
+    },
+    "embed": {
+      "model_id": "amazon.nova-2-multimodal-embeddings-v1:0",
+      "serves": [
+        "amazon.nova-2-multimodal-embeddings-v1:0"
+      ],
+      "structured_output": false,
+      "honours_seed": false,
+      "price": null
+    },
+    "recsys_embed": null,
+    "safety": null,
+    "fallbacks": {}
+  },
+  "region": "us-east-1",
+  "provider_requests_per_minute": 18,
+  "repeats": 2,
+  "mock_request_delay_ms": 2,
+  "settings": {
+    "base_url": "http://offline-benchmark.test/v1",
+    "max_concurrency": 16,
+    "embeddings_batch_size": 64,
+    "max_retries": 2,
+    "requests_per_minute": 1000000,
+    "tokens_per_minute": 100000000
+  },
+  "results": {
+    "simulation": {
+      "cold": {
+        "samples": [
+          {
+            "port_invocations": 8,
+            "submitted_texts": 75,
+            "upstream_requests": 66,
+            "upstream_tokens": null,
+            "billed_cost": null,
+            "allocated_cost": 0.0,
+            "gateway_requests": 5,
+            "unknown_allocated_cost_records": 100,
+            "preparation_seconds": 200.08920538200618,
+            "chat_seconds": 0.007410373982565943,
+            "finalization_seconds": 18.49377622501197,
+            "simulation_seconds": 218.64561190899985,
+            "trace_events": 689,
+            "memory_events": 120,
+            "cache_hits": 3,
+            "content_hash": "3f7fad456e2a24d6f9657f092041a7cb35d6a572eb9054df177fa4801aa23585",
+            "prompts_hash": "0ffa7a95625445c0eca2e662bc7342eb4106437826259cf0c6135ec0536081f7",
+            "state_hash": "bf65acdc4156e41f173468570717004a624e87988a6016a59f71346d5de1d9da"
+          },
+          {
+            "port_invocations": 8,
+            "submitted_texts": 75,
+            "upstream_requests": 66,
+            "upstream_tokens": null,
+            "billed_cost": null,
+            "allocated_cost": 0.0,
+            "gateway_requests": 5,
+            "unknown_allocated_cost_records": 100,
+            "preparation_seconds": 200.10834966699622,
+            "chat_seconds": 0.009175290004350245,
+            "finalization_seconds": 19.668068611004855,
+            "simulation_seconds": 219.83388912599912,
+            "trace_events": 689,
+            "memory_events": 120,
+            "cache_hits": 3,
+            "content_hash": "3f7fad456e2a24d6f9657f092041a7cb35d6a572eb9054df177fa4801aa23585",
+            "prompts_hash": "0ffa7a95625445c0eca2e662bc7342eb4106437826259cf0c6135ec0536081f7",
+            "state_hash": "bf65acdc4156e41f173468570717004a624e87988a6016a59f71346d5de1d9da"
+          }
+        ],
+        "median_seconds": 219.2397505174995,
+        "min_seconds": 218.64561190899985,
+        "max_seconds": 219.83388912599912
+      },
+      "warm": {
+        "samples": [
+          {
+            "port_invocations": 8,
+            "submitted_texts": 75,
+            "upstream_requests": 0,
+            "upstream_tokens": null,
+            "billed_cost": null,
+            "allocated_cost": 0.0,
+            "gateway_requests": 0,
+            "unknown_allocated_cost_records": 0,
+            "preparation_seconds": 0.016824961989186704,
+            "chat_seconds": 0.006159194017527625,
+            "finalization_seconds": 0.017330907998257317,
+            "simulation_seconds": 0.09004299100342905,
+            "trace_events": 689,
+            "memory_events": 120,
+            "cache_hits": 8,
+            "content_hash": "3f7fad456e2a24d6f9657f092041a7cb35d6a572eb9054df177fa4801aa23585",
+            "prompts_hash": "0ffa7a95625445c0eca2e662bc7342eb4106437826259cf0c6135ec0536081f7",
+            "state_hash": "bf65acdc4156e41f173468570717004a624e87988a6016a59f71346d5de1d9da"
+          },
+          {
+            "port_invocations": 8,
+            "submitted_texts": 75,
+            "upstream_requests": 0,
+            "upstream_tokens": null,
+            "billed_cost": null,
+            "allocated_cost": 0.0,
+            "gateway_requests": 0,
+            "unknown_allocated_cost_records": 0,
+            "preparation_seconds": 0.01972795499750646,
+            "chat_seconds": 0.006314104983175639,
+            "finalization_seconds": 0.017912460010848008,
+            "simulation_seconds": 0.09807840599387418,
+            "trace_events": 689,
+            "memory_events": 120,
+            "cache_hits": 8,
+            "content_hash": "3f7fad456e2a24d6f9657f092041a7cb35d6a572eb9054df177fa4801aa23585",
+            "prompts_hash": "0ffa7a95625445c0eca2e662bc7342eb4106437826259cf0c6135ec0536081f7",
+            "state_hash": "bf65acdc4156e41f173468570717004a624e87988a6016a59f71346d5de1d9da"
+          }
+        ],
+        "median_seconds": 0.09406069849865162,
+        "min_seconds": 0.09004299100342905,
+        "max_seconds": 0.09807840599387418
+      }
+    }
+  },
+  "status": "complete"
+}

@@ -8,7 +8,8 @@ The port promises what a real embedding call produces: the vectors in input orde
 was pinned and the one that served, and what each batch cost."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from uuid import uuid4
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
@@ -18,8 +19,25 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class EmbedBatch:
+    """One physical batch's input range and bills, including when its invocation fails."""
+
+    start: int
+    stop: int
+    costs: tuple["CostRecorded", ...]
+    served_model_id: str | None = None
+    billing_id: str = field(default_factory=lambda: uuid4().hex)
+
+
+@dataclass(frozen=True)
 class EmbedResult:
-    """What one `embed` call produced: vectors in input order, the pinned and served model, and cost."""
+    """Vectors in input order, pinned/served models, and physical bills.
+
+    Multi-chunk implementations provide contiguous input ranges in `batches`, whose costs flatten
+    to `costs`. A simple single-request port may omit them; callers then treat its bills as one
+    aggregate over all submitted texts. Failing multi-chunk implementations retain available batch
+    bills on the raised exception so completed sibling work remains accountable.
+    """
 
     vectors: "np.ndarray"
     model_id: str
@@ -27,6 +45,7 @@ class EmbedResult:
     normalization: str
     dim: int
     costs: tuple["CostRecorded", ...]
+    batches: tuple[EmbedBatch, ...] = ()
 
 
 @runtime_checkable

@@ -1,0 +1,46 @@
+{
+  "full_suite": {
+    "command": ".venv/bin/python -m pytest -q",
+    "passed": 2163,
+    "failed": 12,
+    "skipped": 2,
+    "seconds": 256.16,
+    "revision": "d3e331a"
+  },
+  "baseline_revision": "7d757cc",
+  "baseline_reproduced_failures": [
+    "tests/boundary/cli/test_preflight.py::test_a_pinned_scale_can_actually_be_scored_with",
+    "tests/boundary/holdout/test_holdout.py::test_the_real_shards_are_the_endpoint_of_the_same_command",
+    "tests/boundary/web/test_api.py::test_ontologies_and_briefs_come_from_the_engine_checkout",
+    "tests/boundary/web/test_interface.py::test_the_first_screen_reads_the_workspace_the_engine_derived",
+    "tests/boundary/web/test_interface.py::test_lists_arrive_the_way_the_pages_read_them",
+    "tests/boundary/web/test_interface.py::test_every_brief_the_engine_holds_survives_the_intake_form",
+    "tests/boundary/web/test_interface.py::test_a_form_with_an_awkward_description_is_still_a_brief_the_engine_reads",
+    "tests/boundary/web/test_interface.py::test_a_brief_loaded_into_intake_keeps_its_competitors_and_filters",
+    "tests/boundary/web/test_interface_reads_through_the_api.py::test_a_refusal_is_never_reduced_to_its_status_code",
+    "tests/boundary/web/test_launch_any_study.py::test_the_corpus_endpoint_says_which_shards_are_cached_and_which_sources_exist",
+    "tests/boundary/web/test_launch_any_study.py::test_the_corpus_endpoint_returns_no_filesystem_path",
+    "tests/boundary/web/test_launch_any_study.py::test_the_anchors_endpoint_lists_each_version_with_its_verdict"
+  ],
+  "baseline_runtime_fixtures": "Identical examples, anchors and ontologies; frontend tests use identical installed node dependencies.",
+  "ontology_sha256": "dd5d517801430de61715a2866b46e2c13b6b9c54c84d57c8c64179695ad694b1",
+  "live_configuration": {
+    "model": "amazon.nova-2-multimodal-embeddings-v1:0",
+    "region": "us-east-1",
+    "account_requests_per_minute": 20,
+    "benchmark_provider_requests_per_minute": 18,
+    "dimension": 256,
+    "purpose": "GENERIC_INDEX",
+    "chat": "fixed replies",
+    "aws_cli_max_attempts": 1
+  },
+  "final_affected_suite": {
+    "revision": "7de727f",
+    "command": ".venv/bin/python -m pytest -q tests/boundary/agent tests/boundary/inference tests/boundary/runner tests/boundary/trace tests/boundary/analysis tests/property",
+    "passed": 1244,
+    "failed": 0,
+    "seconds": 130.2
+  },
+  "offline_signatures_match": true,
+  "live_signatures_match_across_all_conditions": true
+}
