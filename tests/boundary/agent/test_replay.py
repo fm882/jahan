@@ -149,4 +149,6 @@ def test_a_resumed_run_continues_from_checkpoint_without_rerunning_turns():
 
     assert states_equal(resumed_state, whole_state)
     for resumed, uninterrupted in zip(resumed_outcomes, whole_outcomes[6:]):
-        assert resumed.model_dump_json() == uninterrupted.model_dump_json()
+        # Invocation-specific billing references can differ; persona behavior cannot.
+        assert resumed.model_dump_json(exclude={"costs"}) == uninterrupted.model_dump_json(exclude={"costs"})
+        assert sum(cost.cost or 0 for cost in resumed.costs) == sum(cost.cost or 0 for cost in uninterrupted.costs)

@@ -7,6 +7,11 @@ import numpy as np
 import pytest
 
 from simcore.agent._embedding import embed_texts
+from simcore.agent import AgentConfig, turns
+from simcore.ports.fake import FakeChat
+from simcore.schemas import CompletedTurn, MemoryEvent, TurnFailure
+from tests.boundary.agent.support import answering, make_job, memory_dict
+from tests.study_builders import stimulus_id
 from simcore.ports.fake import FakeEmbed
 from simcore.runner._ledger import SpendMeter, ledger_sum, mean_call_cost, priced_spend
 from tests.boundary.inference.test_embeddings import Recorder, client_for, embed_reply
@@ -95,3 +100,77 @@ def test_old_cost_serialization_has_no_allocation_field():
     old = FakeEmbed().embed(["old"]).costs[0]
     assert "allocation" not in old.model_dump(mode="json")
     assert type(old).model_validate(old.model_dump(mode="json")) == old
+
+
+def history_job(index, number=1):
+    job = make_job(index, n=index, shown=[(number, "interest", 0.8)])
+    memory = MemoryEvent.model_validate(memory_dict(index, 0, f"private history {index}", embedding=[1, 0, 0, 0]))
+    return job.model_copy(update={"state": job.state.model_copy(update={"memories": (memory,)})})
+
+
+def quiet_config():
+    return AgentConfig(reflection_interval=100, reflection_jitter=0, probe_share=0)
+
+
+def test_shared_retrieval_vector_preserves_private_prompts_and_recorded_costs():
+    from simcore.runner._run import _turn_events
+
+    recorder = Recorder(embed_reply(cost=0.01))
+    client, _ = client_for(recorder, embeddings_batch_size=1)
+    jobs = [history_job(0), history_job(1)]
+    chat = FakeChat(answering())
+    outcomes = turns(jobs, chat=chat, embed=client, config=quiet_config(),
+                     stimulus_texts={stimulus_id(1): "shared query"})
+    assert recorder.bodies[0]["input"] == ["shared query"]
+    assert sum(body["input"] == ["shared query"] for body in recorder.bodies) == 1
+    events = []
+    for index, (job, outcome) in enumerate(zip(jobs, outcomes, strict=True)):
+        assert isinstance(outcome, CompletedTurn)
+        assert f"private history {index}" in chat.calls[index]
+        assert f"private history {1-index}" not in chat.calls[index]
+        recorded, _ = _turn_events(
+            world_id="a1b2c3d4e5f6", tick=3, seq_start=len(events), presentation=job.presentation,
+            outcome=outcome, state=job.state,
+        )
+        events.extend(recorded)
+    embedded_costs = [event.payload for event in events if event.payload.kind == "cost" and event.payload.role.value == "embed"]
+    assert sum(cost.cost for cost in embedded_costs) == pytest.approx(0.03)
+    assert sum(cost.cost for cost in embedded_costs if cost.allocation) == pytest.approx(0.01)
+    assert all(type(event).model_validate_json(event.model_dump_json()) == event for event in events)
+
+
+def test_failed_retrieval_does_not_fail_jobs_without_retrieval_dependencies():
+    class BrokenQuery(FakeEmbed):
+        def embed(self, texts):
+            if "query" in texts:
+                raise RuntimeError("endpoint unavailable")
+            return super().embed(texts)
+
+    jobs = [history_job(0), make_job(1), history_job(2)]
+    outcomes = turns(jobs, chat=FakeChat(answering()), embed=BrokenQuery(dim=4),
+                     config=quiet_config(), stimulus_texts={stimulus_id(1): "query"})
+    assert isinstance(outcomes[0], TurnFailure)
+    assert isinstance(outcomes[1], CompletedTurn)
+    assert isinstance(outcomes[2], TurnFailure)
+    assert [outcome.persona_id for outcome in outcomes] == [job.persona.persona_id for job in jobs]
+
+
+def test_retrieval_cost_is_retained_when_prompt_cannot_fit():
+    recorder = Recorder(embed_reply(cost=0.01))
+    client, _ = client_for(recorder)
+    config = quiet_config()
+    config = replace(config, token_budget={role: 1 for role in config.token_budget})
+    outcomes = turns([history_job(0)], chat=FakeChat(answering()), embed=client,
+                     config=config, stimulus_texts={stimulus_id(1): "query"})
+    assert isinstance(outcomes[0], TurnFailure)
+    assert sum(cost.cost for cost in outcomes[0].costs) == 0.01
+
+
+def test_mixed_cached_chunks_keep_zero_costs_on_their_consumers(tmp_path):
+    client, _ = client_for(Recorder(embed_reply(cost=0.02)), cache_dir=tmp_path, embeddings_batch_size=1)
+    client.embed(["cached"])
+    result = embed_texts({0: ["cached"], 1: ["new"], 2: ["cached"]}, client)
+    assert result.error is None
+    assert result.costs[0][0].cache_hit and result.costs[0][0].cost == 0
+    assert result.costs[2][0].cache_hit and result.costs[2][0].cost == 0
+    assert result.costs[1][0].cost == 0.02

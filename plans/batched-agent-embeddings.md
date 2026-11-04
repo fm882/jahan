@@ -120,28 +120,33 @@ from original bills without double counting aggregate spend.
 
 ### Acceptance criteria
 
-- [ ] Identical actual query texts under matching settings are submitted once;
+- [x] Identical actual query texts under matching settings are submitted once;
       differing whitespace, casing, numbers and fallback impression text remain
       distinct. Empty and skipped jobs do not enter the submission.
-- [ ] Shared query vectors retrieve only each persona's own memories. Retrieved
+- [x] Shared query vectors retrieve only each persona's own memories. Retrieved
       IDs, tie order, prompts and outcomes match baseline fixtures.
-- [ ] Single- and multi-chunk results map to original jobs without shifts, even
+- [x] Single- and multi-chunk results map to original jobs without shifts, even
       when network replies complete out of order.
-- [ ] Returned vector cardinality and model/configuration associations are
+- [x] Returned vector cardinality and model/configuration associations are
       checked before successful outcomes are built.
-- [ ] Uneven lengths, repeated inputs, cached chunks, zero estimates, unknown
+- [x] Uneven lengths, repeated inputs, cached chunks, zero estimates, unknown
       prices and rounding preserve cost/token totals and provenance through
       outcome recording and run aggregates.
-- [ ] Allocations use only the texts submitted in each physical chunk. Already
+- [x] Allocations use only the texts submitted in each physical chunk. Already
       incurred retrieval costs survive a later context-budget refusal.
-- [ ] Exhausted invocation retries fail all dependent jobs and leave unrelated
+- [x] Exhausted invocation retries fail all dependent jobs and leave unrelated
       jobs usable. Completed-chunk and failed-attempt costs remain reconcilable.
-- [ ] Inference settings, chat concurrency, retry counts and decision callback
+- [x] Inference settings, chat concurrency, retry counts and decision callback
       semantics are unchanged; no individual-text recovery path is added.
-- [ ] Existing consumers of embedding results and old stored cost records remain
+- [x] Existing consumers of embedding results and old stored cost records remain
       usable with any additive metadata change.
 
 ---
+
+Evidence: 366 agent, inference, runner and property checks passed; additional
+physical-cache allocation and trace compatibility checks are recorded below.
+Billing references are invocation-specific, so resume comparisons exclude cost
+records while still comparing behavior and total spend.
 
 ## Phase 3: Complete ordinary turn memories with batched embeddings
 

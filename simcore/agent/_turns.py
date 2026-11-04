@@ -50,11 +50,12 @@ from ._beliefs import (
     split_summary,
 )
 from ._config import AgentConfig
+from ._embedding import embed_texts
 from ._context import AssembledContext, ContextBudgetExceeded, assemble, render_beliefs, render_shown
 from ._guard import allowed_stimuli, check, strict_question
 from ._ids import memory_id, reaction_id
 from ._intent import PURCHASE_CONSTRUCT, score_intents, wants_intent
-from ._memory import describe_turn, importance_of, retrieve, write_memory
+from ._memory import describe_turn, importance_of, needs_query, retrieve, write_memory
 from ._parse import ParsedReaction, parse_reaction, parse_reflection
 from ._probe import (
     disagreement_rate,  # noqa: F401  (re-exported for the report path)
@@ -95,7 +96,23 @@ def turns(
     may still send the turn back, and only the recorded tick says what happened."""
     cfg = config or AgentConfig()
     cache = blocks if blocks is not None else PersonaBlockCache()
-    prepared = [_prepare(job, cfg, ontology, cache, embed, stimulus_texts) for job in jobs]
+    prepared = [_preflight(job, cfg, ontology, cache) for job in jobs]
+    queries = {
+        position: [_stimulus_text(item.job, stimulus_texts)]
+        for position, item in enumerate(prepared)
+        if item.early is None and needs_query(item.job.state.memories, cfg.top_k[cfg.tier_for(item.job.task)])
+    } if embed is not None else {}
+    recalled = embed_texts(queries, embed)
+    for position, item in enumerate(prepared):
+        item.costs.extend(recalled.costs.get(position, ()))
+        if position in queries and recalled.error is not None:
+            item.early = _embedding_failure(item, recalled.error, "retrieval")
+        if item.early is None:
+            text = queries[position][0] if position in queries else None
+            try:
+                prepared[position] = _prepare(item, cfg, stimulus_texts, recalled.vectors.get(text))
+            except Exception as error:  # one outcome per job, including invalid stored vectors
+                item.early = _embedding_failure(item, error, "preparation")
     listen = None if on_decision is None else (lambda position, outcome: _announce(prepared[position].job, outcome, on_decision))
     first = _dispatch(chat, [(position, item.request) for position, item in enumerate(prepared) if item.request is not None], listen)
     for position, item in enumerate(prepared):
@@ -301,16 +318,13 @@ class _Reacted:
     failure: TurnFailure | None = None
 
 
-def _prepare(
+def _preflight(
     job: TurnJob,
     cfg: AgentConfig,
     ontology: CategoryOntology | None,
     cache: PersonaBlockCache,
-    embed,
-    stimulus_texts: Mapping[str, str] | None,
 ) -> _Prepared:
     impression = job.presentation.impression
-    spent: list = []
     if ontology is None:
         block = render_persona_block(job.persona.conditioning, job.persona.attributes)
         block_hash = hash_text(block)
@@ -346,6 +360,23 @@ def _prepare(
             ),
             block,
         )
+    return _Prepared(job, None, block_hash, (), None, block)
+
+
+def _embedding_failure(item: _Prepared, error: Exception, stage: str) -> TurnFailure:
+    return TurnFailure(
+        persona_id=item.job.persona.persona_id,
+        impression_id=item.job.presentation.impression.impression_id,
+        kind=TurnFailureKind.CALL_FAILED,
+        detail=f"the {stage} embeddings failed: {type(error).__name__}: {error}",
+        costs=tuple(item.costs),
+    )
+
+
+def _prepare(item: _Prepared, cfg: AgentConfig, stimulus_texts, stimulus_vector) -> _Prepared:
+    job = item.job
+    impression = job.presentation.impression
+    block, block_hash, spent = item.persona_block, item.persona_block_hash, item.costs
     beliefs = job.state.beliefs
     beliefs_text = render_beliefs(
         {dim.value: value for dim, value in beliefs.dimensions.items()},
@@ -359,8 +390,7 @@ def _prepare(
         tick=impression.tick,
         k=cfg.top_k[tier],
         tau_r=tau_r,
-        embed=embed,
-        costs=spent,
+        stimulus_vector=stimulus_vector,
     )
     memory_texts = tuple(f"[tick {memory.tick}] {memory.description}" for memory in recalled)
     memory_ids = tuple(memory.memory_id for memory in recalled)
