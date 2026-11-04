@@ -212,27 +212,32 @@ embedding I/O from the default turn orchestration once this slice passes.
 
 ### Acceptance criteria
 
-- [ ] Valid multi-sentence summaries, malformed reflection replies and failed
+- [x] Valid multi-sentence summaries, malformed reflection replies and failed
       reflection calls produce the same descriptions, fallback events and belief
       changes as the controlled baseline.
-- [ ] Turn and reflection descriptions share one memory-stage submission per
+- [x] Turn and reflection descriptions share one memory-stage submission per
       configuration, with exact-text deduplication across draft types.
-- [ ] Jobs with repeated draft descriptions remain one consumer per shared text
+- [x] Jobs with repeated draft descriptions remain one consumer per shared text
       for allocation purposes, while every memory event remains separate.
-- [ ] Mixed reflecting/non-reflecting turns preserve IDs, event order, sources,
+- [x] Mixed reflecting/non-reflecting turns preserve IDs, event order, sources,
       importance, numeric representation and state visibility.
-- [ ] Guardrail retries, probes, purchase-intent scoring and provisional decision
+- [x] Guardrail retries, probes, purchase-intent scoring and provisional decision
       callbacks retain existing behavior in the combined execution.
-- [ ] Multi-chunk memory failures conserve costs and affect only jobs dependent
+- [x] Multi-chunk memory failures conserve costs and affect only jobs dependent
       on the failed invocation; no missing required vector is treated as success.
-- [ ] Reconstruction and replay remain valid with newly recorded cost metadata;
+- [x] Reconstruction and replay remain valid with newly recorded cost metadata;
       old traces remain readable. Exact whole-trace hashes are not required to
       match the previous revision.
-- [ ] Default persona turns contain no per-persona retrieval or per-memory
+- [x] Default persona turns contain no per-persona retrieval or per-memory
       embedding submission loops. Keep only compatibility code still needed by
       supported independent callers.
 
 ---
+
+Evidence: 371 agent, inference, runner and property checks passed after reflection
+integration. An additional 236 trace/allocation/property checks passed. Frozen
+pre-optimization hashes still match all six workloads, including guardrails,
+probes, multi-tick memory growth and reflection fallback.
 
 ## Phase 5: Validate multi-tick performance and finish the default path
 
