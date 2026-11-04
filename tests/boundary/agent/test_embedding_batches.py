@@ -267,3 +267,22 @@ def test_failed_reflection_call_uses_batched_fallback_memories():
     assert len(embed.calls) == 1 and len(embed.calls[0]) == 2
     assert all(isinstance(outcome, CompletedTurn) for outcome in outcomes)
     assert all(outcome.memories[1].description.startswith("On reflection:") for outcome in outcomes)
+
+
+def test_unresolved_embedding_pin_is_a_recorded_stage_failure():
+    class Unpinned:
+        @property
+        def model_id(self):
+            raise ValueError("embedding role is not pinned")
+
+        def embed(self, texts):
+            raise AssertionError("an unpinned role must not dispatch")
+
+    result = embed_texts({0: ["query"]}, Unpinned(), scope="retrieval")
+    assert isinstance(result.error, ValueError)
+    assert result.costs == {0: []}
+    outcomes = turns([history_job(0), make_job(1)], chat=FakeChat(answering()),
+                     embed=Unpinned(), config=quiet_config())
+    assert all(isinstance(outcome, TurnFailure) for outcome in outcomes)
+    assert not outcomes[0].costs
+    assert len(outcomes[1].costs) == 1  # chat completed before memory embedding was refused

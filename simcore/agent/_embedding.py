@@ -80,7 +80,9 @@ def embed_texts(inputs: Mapping[int, Sequence[str]], embed, *, scope: str | None
         return EmbeddedTexts({}, {}, costs)
     result = None
     error = None
+    model_id = None
     try:
+        model_id = embed.model_id
         result = embed.embed(texts)
         batches = result.batches if getattr(result, "batches", ()) else (
             EmbedBatch(0, len(texts), result.costs, result.served_model_id),
@@ -91,7 +93,7 @@ def embed_texts(inputs: Mapping[int, Sequence[str]], embed, *, scope: str | None
         batches = getattr(failure, "batches", ()) or (EmbedBatch(0, len(texts), tuple(bills)),)
     for batch in batches:
         if scope is not None:
-            identity = json.dumps([scope, embed.model_id, batch.start, batch.stop, texts[batch.start:batch.stop]])
+            identity = json.dumps([scope, model_id, batch.start, batch.stop, texts[batch.start:batch.stop]])
             batch = replace(batch, billing_id=hashlib.sha256(identity.encode()).hexdigest())
         _allocate(batch, texts, consumers, costs)
     if error is not None:
@@ -100,7 +102,7 @@ def embed_texts(inputs: Mapping[int, Sequence[str]], embed, *, scope: str | None
         vectors = np.asarray(result.vectors)
         if vectors.ndim != 2 or vectors.shape != (len(texts), result.dim) or result.dim <= 0:
             raise ValueError("embedding result must contain one vector of the declared dimension per unique text")
-        if not np.isfinite(vectors).all() or result.model_id != embed.model_id:
+        if not np.isfinite(vectors).all() or result.model_id != model_id:
             raise ValueError("embedding result has nonfinite values or differs from the pinned model")
         ranges = [i for batch in batches for i in range(batch.start, batch.stop)]
         if ranges != list(range(len(texts))):
