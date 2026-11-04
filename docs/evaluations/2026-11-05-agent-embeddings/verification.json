@@ -4,7 +4,8 @@
     "passed": 2163,
     "failed": 12,
     "skipped": 2,
-    "seconds": 256.16
+    "seconds": 256.16,
+    "revision": "d3e331a"
   },
   "baseline_revision": "7d757cc",
   "baseline_reproduced_failures": [
@@ -32,5 +33,14 @@
     "purpose": "GENERIC_INDEX",
     "chat": "fixed replies",
     "aws_cli_max_attempts": 1
-  }
+  },
+  "final_affected_suite": {
+    "revision": "7de727f",
+    "command": ".venv/bin/python -m pytest -q tests/boundary/agent tests/boundary/inference tests/boundary/runner tests/boundary/trace tests/boundary/analysis tests/property",
+    "passed": 1244,
+    "failed": 0,
+    "seconds": 130.2
+  },
+  "offline_signatures_match": true,
+  "live_signatures_match_across_all_conditions": true
 }

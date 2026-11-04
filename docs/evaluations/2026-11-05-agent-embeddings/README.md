@@ -1,8 +1,8 @@
 # Batched agent embeddings evaluation
 
-Status: deterministic checks passed; final offline measurements and live Nova
-comparison are in progress. This document must not be read as merge readiness
-until the result tables and acceptance audit below are complete.
+Status: implemented and verified for the scoped optimization. Final affected
+checks pass (1,244 tests). The 12 full-suite baseline failures below remain
+outstanding. No merge has been performed.
 
 ## Scope
 
@@ -79,28 +79,46 @@ Five repetitions per condition; 20 personas, three ticks, fixed responses and a 
 
 | Workload | Cache | Baseline ms | Optimized ms | Speedup | Port calls | Gateway requests |
 |---|---|---:|---:|---:|---:|---:|
-| empty | cold | 56.84 (51.18–74.70) | 38.78 (37.71–64.65) | 1.47x | 120 → 5 | 2 → 2 |
-| empty | warm | 52.22 (50.83–55.75) | 30.68 (29.45–37.72) | 1.70x | 120 → 5 | 0 → 0 |
-| repeated | cold | 63.45 (57.82–65.73) | 42.87 (42.49–56.57) | 1.48x | 120 → 6 | 2 → 2 |
-| repeated | warm | 52.30 (50.08–54.98) | 65.47 (34.73–68.07) | 0.80x | 120 → 6 | 0 → 0 |
-| unique | cold | 167.16 (162.40–172.20) | 48.56 (41.81–59.48) | 3.44x | 120 → 6 | 40 → 2 |
-| unique | warm | 51.12 (49.59–55.49) | 49.01 (38.25–93.34) | 1.04x | 120 → 6 | 0 → 0 |
-| reflections | cold | 96.51 (92.96–120.62) | 50.69 (48.10–51.35) | 1.90x | 240 → 6 | 4 → 2 |
-| reflections | warm | 77.74 (76.55–80.52) | 43.82 (41.33–52.71) | 1.77x | 240 → 6 | 0 → 0 |
-| simulation | cold | 457.87 (455.00–486.20) | 120.83 (110.11–123.92) | 3.79x | 400 → 8 | 104 → 5 |
-| simulation | warm | 158.97 (154.39–196.55) | 103.62 (91.70–216.28) | 1.53x | 400 → 8 | 0 → 0 |
+| empty | cold | 56.84 (51.18–74.70) | 36.07 (32.03–54.34) | 1.58x | 120 → 5 | 2 → 2 |
+| empty | warm | 52.22 (50.83–55.75) | 29.11 (25.90–30.73) | 1.79x | 120 → 5 | 0 → 0 |
+| repeated | cold | 63.45 (57.82–65.73) | 36.76 (35.55–39.17) | 1.73x | 120 → 6 | 2 → 2 |
+| repeated | warm | 52.30 (50.08–54.98) | 29.91 (28.62–31.42) | 1.75x | 120 → 6 | 0 → 0 |
+| unique | cold | 167.16 (162.40–172.20) | 36.81 (35.02–38.62) | 4.54x | 120 → 6 | 40 → 2 |
+| unique | warm | 51.12 (49.59–55.49) | 30.62 (29.05–49.13) | 1.67x | 120 → 6 | 0 → 0 |
+| reflections | cold | 96.51 (92.96–120.62) | 41.28 (39.81–42.25) | 2.34x | 240 → 6 | 4 → 2 |
+| reflections | warm | 77.74 (76.55–80.52) | 35.48 (33.07–37.89) | 2.19x | 240 → 6 | 0 → 0 |
+| simulation | cold | 457.87 (455.00–486.20) | 91.45 (90.28–94.33) | 5.01x | 400 → 8 | 104 → 5 |
+| simulation | warm | 158.97 (154.39–196.55) | 73.98 (71.94–98.46) | 2.15x | 400 → 8 | 0 → 0 |
 
 All 50 measured offline comparisons match baseline outcome, prompt and final-state signatures. Each real-runner sample records 120 memory events, exercising memory growth. These are controlled local measurements, not live-provider or production-scale speedup claims.
 
-The cold end-to-end timing ranges are disjoint, supporting an improvement for
-that workload. Warm-cache results are mixed: the repeated-query median regresses
-by about 25%, unique queries are approximately neutral, and the end-to-end
-ranges overlap despite a lower optimized median. These short local measurements
-do not establish a consistent warm-cache improvement for every workload.
+Cold and warm results are both retained, including their full timing ranges.
+These short local workloads show timing variability; a lower median alone
+does not establish an improvement beyond that variability. The live comparison
+below provides separate evidence under the selected model and account quota.
+Earlier measurements on revision `6226971` included a warm repeated-query
+regression (0.80x), retained in artifact commit `d7ed306`. The table above was
+remeasured on final source `7de727f` after the model-pin failure fix; differences
+between measurement runs must not be attributed entirely to that fix.
+
+Raw samples: [offline baseline](offline-baseline.json) and
+[final-source offline results](offline-optimized.json).
 
 ### Live Nova comparison
 
-Pending the quota-paced, checkpointed rerun. An earlier trial hit provider throttling during cache setup; its timings were not checkpointed and are excluded from performance evidence.
+Two measured repetitions per cache condition, with fixed chat replies and live Nova embeddings, 20 personas, three ticks, 120 retained memory events, and provider pacing at 18 requests per minute.
+
+| Cache | Baseline seconds (range) | Optimized seconds (range) | Reduction | Port calls | Gateway requests | Nova invocations |
+|---|---:|---:|---:|---:|---:|---:|
+| cold | 361.567 (352.682–370.451) | 219.240 (218.646–219.834) | 39.4% | 400 → 8 | 104 → 5 | 104 → 66 |
+| warm | 0.177 (0.174–0.180) | 0.094 (0.090–0.098) | 46.9% | 400 → 8 | 0 → 0 | 0 → 0 |
+
+Both cold and warm timing ranges are disjoint. All live outcome, prompt and recorded-state signatures match across revisions, repetitions and cache conditions. Provider invocations fall from 104 to 66 per cold run; logical embedding calls fall from 400 to 8. This establishes the required bounded improvement under the tested model, quota and fixed-response workload. It does not establish fully live chat performance or a production-scale speedup.
+
+Raw samples: [live baseline](live-baseline.json) and
+[live optimized results](live-optimized.json).
+
+The first exploratory live trial was discarded after throttling during cache setup exposed missing incremental result persistence. The final measurements above use the checkpointed, quota-paced harness; failed exploratory timings are not included.
 
 The account's Service Quotas API reports 20 on-demand Nova requests per minute.
 The rerun paces provider calls at 18 per minute, shared across chunks and cache
@@ -118,6 +136,9 @@ also reproduce with the same installed frontend dependencies. They concern
 existing anchor/corpus inputs and web routes or contracts; they are outside this
 change. The affected agent, inference, runner, trace, analysis and schema/property
 checks pass. No unrelated failure is hidden or marked fixed.
+After the final code changes, the affected agent, inference, runner, trace,
+analysis and property suite passes **1,244 tests** in 130.20 seconds. Commands,
+revisions and baseline failure IDs are in [verification.json](verification.json).
 
 ## Reproduction
 
@@ -136,7 +157,7 @@ cp ontologies/beverage_protein/1.0.0.json "$embedding_baseline/ontologies/bevera
   --source "$embedding_baseline" --revision 7d757cc --repeats 5 \
   --output /tmp/embedding-offline-baseline.json
 .venv/bin/python benchmarks/agent_embeddings.py \
-  --revision IMPLEMENTATION_REVISION --repeats 5 \
+  --revision 7de727f --repeats 5 \
   --output /tmp/embedding-offline-optimized.json
 ```
 
@@ -150,10 +171,30 @@ command arguments or evaluation artifacts.
   --live-nova --region us-east-1 --provider-rpm 18 --repeats 2 \
   --output /tmp/embedding-live-baseline.json
 .venv/bin/python benchmarks/agent_embeddings.py \
-  --revision IMPLEMENTATION_REVISION --live-nova --region us-east-1 --provider-rpm 18 --repeats 2 \
+  --revision 7de727f --live-nova --region us-east-1 --provider-rpm 18 --repeats 2 \
   --output /tmp/embedding-live-optimized.json
 ```
 
 ## Acceptance audit
 
-Pending final results, final checks and plan updates. No merge has been performed.
+1. Relevant correctness and integration checks pass: 1,244 final affected tests.
+   All 12 failures from the broader suite reproduce on the baseline and remain
+   explicitly documented.
+2. Six frozen workload signatures, 50 paired offline samples and all eight live
+   samples preserve outcomes, prompts and state within the declared equivalence
+   boundary. Different cost allocations and trace hashes remain permitted.
+3. The 200-persona empty-memory regression makes no retrieval embedding calls.
+   Both retrieval and all new-memory descriptions use the shared stage path;
+   the measured runner reduces embedding-port calls from 400 to 8.
+4. Boundary tests reconcile bills and allocated costs/tokens through outcomes,
+   traces, summaries and ledgers, including failed attempts and billed siblings.
+   Unknown live provider prices remain unknown; no AWS invoice claim is made.
+5. Repeated bounded live runs demonstrate lower total elapsed time beyond the
+   observed ranges: cold median 361.567 to 219.240 seconds (39.4% reduction), warm
+   median 0.177 to 0.094 seconds (46.9% reduction). Cold Nova invocations fall from
+   104 to 66. Workload and model limitations are stated above.
+6. Baseline artifacts precede optimization, all cache conditions and workloads
+   are reported, and no unmeasured universal percentage is promised.
+7. One default execution path remains, with no new production cache, feature
+   flag, tuning setting or unrelated upgrade. Supported standalone memory helpers
+   retain compatibility. Work remains on the implementation branch.
