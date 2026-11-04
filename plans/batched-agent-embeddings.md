@@ -145,8 +145,8 @@ from original bills without double counting aggregate spend.
 
 Evidence: 366 agent, inference, runner and property checks passed; additional
 physical-cache allocation and trace compatibility checks are recorded below.
-Billing references are invocation-specific, so resume comparisons exclude cost
-records while still comparing behavior and total spend.
+Initial billing references were invocation-specific; Phase 3 made turn-stage
+references stable and restored exact same-shape resume comparisons.
 
 ## Phase 3: Complete ordinary turn memories with batched embeddings
 
@@ -168,25 +168,30 @@ draft and its final embedded event internal to orchestration and memory logic.
 
 ### Acceptance criteria
 
-- [ ] A successful non-reflecting turn batch makes one multi-text memory-stage
+- [x] A successful non-reflecting turn batch makes one multi-text memory-stage
       port invocation per embedding configuration, rather than one per persona;
       inference still performs physical request splitting.
-- [ ] Equal descriptions share a vector while preserving distinct memory IDs,
+- [x] Equal descriptions share a vector while preserving distinct memory IDs,
       owners, descriptions, importance, sources, order and ticks.
-- [ ] Vector format, served-model metadata, prompts, reactions and final persona
+- [x] Vector format, served-model metadata, prompts, reactions and final persona
       state match deterministic baseline fixtures.
-- [ ] A second tick observes the same memories through the existing state-update
+- [x] A second tick observes the same memories through the existing state-update
       boundary; completion order creates no early memory visibility.
-- [ ] A shared text's allocation is split among distinct consuming jobs, not
+- [x] A shared text's allocation is split among distinct consuming jobs, not
       duplicated per memory draft. Recorded totals reconcile with provider bills.
-- [ ] Memory-stage failures record one ordered failure per dependent job and
+- [x] Memory-stage failures record one ordered failure per dependent job and
       retain earlier chat/retrieval costs plus available memory-stage costs.
-- [ ] A draft or later finalization error is isolated to its job; unrelated jobs
+- [x] A draft or later finalization error is isolated to its job; unrelated jobs
       complete and incurred costs are retained.
-- [ ] No-embedding operation, single-job turns and public memory-helper contracts
+- [x] No-embedding operation, single-job turns and public memory-helper contracts
       remain valid. Reflection behavior has not regressed.
 
 ---
+
+Evidence: 144 agent/contract checks and 20 targeted allocation/runner checks
+passed. Twenty equal descriptions produced one submitted text and twenty
+distinct memory IDs. Billing scopes now preserve exact same-shape resume and
+process comparisons, including costs.
 
 ## Phase 4: Include reflection memories in the shared memory stage
 
