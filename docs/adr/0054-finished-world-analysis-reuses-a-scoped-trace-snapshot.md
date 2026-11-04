@@ -7,7 +7,7 @@ event kind and event ID, then release the full snapshot before processing the
 next world. This bounds retained trace data to one world while preserving the
 trace as the sole authoritative record.
 
-The [local runtime review](../simulation-runtime-review-2026-11-04.md) measured
+A local experiment measured
 summary generation on one 8,351-event world with five selected persona histories:
 9.2695 seconds with 11 full partition reads versus 0.8537 seconds with one
 validated snapshot, with identical serialized summary JSON. This supports reuse;

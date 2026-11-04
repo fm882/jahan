@@ -38,9 +38,8 @@ without changing the valid indexed query path. The
 on `0093347`, verifying the same fingerprints and one-load-per-world counts.
 That replay is a correctness check, not another five-repetition timing study.
 
-See the [benchmark harness instructions](../../../benchmarks/README.md) for
-fixture preparation and comparison commands. The retained local world and
-generated synthetic populations are not committed; original-artifact reproduction
+The benchmark harness is not included in this change. The retained local world
+and generated synthetic populations are not committed; original-artifact reproduction
 requires those inputs. Exact artifact identities and sizes are in the raw data.
 
 ## Correctness and regression checks

@@ -188,7 +188,7 @@ operations before considering the optimization complete. There is no universal
 
 [ADR 0054](../adr/0054-finished-world-analysis-reuses-a-scoped-trace-snapshot.md)
 records the agreed architectural boundary. The
-[runtime review](../simulation-runtime-review-2026-11-04.md) records the local
-experiment and its limits. Existing trace, analysis and report ADRs continue to
+[evaluation](../evaluations/2026-11-04-trace-reuse/README.md) records the measured
+results and their limits. Existing trace, analysis and report ADRs continue to
 govern correctness. A tracer-bullet implementation plan is a separate follow-up
 artifact; this document specifies requirements rather than implementation phases.
