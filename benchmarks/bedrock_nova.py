@@ -6,11 +6,16 @@ each separately under a bounded semaphore, never by concatenating persona texts.
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import tempfile
 
 
 MODEL = "amazon.nova-2-multimodal-embeddings-v1:0"
+
+
+class NovaThrottle(RuntimeError):
+    pass
 
 
 async def embeddings(texts, *, region, concurrency=16):
@@ -33,6 +38,7 @@ async def embeddings(texts, *, region, concurrency=16):
                     "--content-type", "application/json", "--accept", "application/json",
                     "--cli-connect-timeout", "10", "--cli-read-timeout", "60",
                     "--no-cli-pager", str(response),
+                    env={**os.environ, "AWS_MAX_ATTEMPTS": "1", "AWS_RETRY_MODE": "standard"},
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
                 try:
@@ -43,8 +49,9 @@ async def embeddings(texts, *, region, concurrency=16):
                     raise RuntimeError("Nova CLI invocation exceeded 90 seconds") from None
                 if process.returncode:
                     # Do not persist AWS account identifiers or credential diagnostics.
-                    category = "throttled" if b"Throttl" in stderr else "failed"
-                    raise RuntimeError(f"Nova CLI invocation {category} (exit {process.returncode})")
+                    if b"Throttl" in stderr:
+                        raise NovaThrottle("Nova rate limited the embedding request")
+                    raise RuntimeError(f"Nova CLI invocation failed (exit {process.returncode})")
                 payload = json.loads(response.read_text())
                 vectors = payload["embeddings"]
                 if len(vectors) != 1 or vectors[0]["embeddingType"] != "TEXT" or "truncatedCharLength" in vectors[0]:

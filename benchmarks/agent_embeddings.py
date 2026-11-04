@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--revision", required=True, help="revision of the selected source tree")
+    parser.add_argument("--resume", action="store_true", help="retain completed samples from this output file")
     parser.add_argument("--personas", type=int, default=20)
     parser.add_argument("--ticks", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=5)
@@ -51,12 +52,12 @@ def main():
 
     if args.live_nova:
         # This helper belongs to the harness, even when --source selects old code.
-        from bedrock_nova import MODEL, embeddings as nova_embeddings
+        from bedrock_nova import MODEL, NovaThrottle, embeddings as nova_embeddings
     model = MODEL if args.live_nova else "benchmark/embed"
     pins = ModelPins.model_validate({"tier_a": "fake/chat", "tier_b": "fake/chat", "embed": model})
     settings = {
         "base_url": "http://offline-benchmark.test/v1", "max_concurrency": 16,
-        "embeddings_batch_size": 64, "max_retries": 0,
+        "embeddings_batch_size": 64, "max_retries": 2 if args.live_nova else 0,
         "requests_per_minute": 1000000, "tokens_per_minute": 100000000,
     }
 
@@ -75,7 +76,10 @@ def main():
             metrics["gateway_requests"] += 1
             if args.live_nova:
                 metrics["upstream_requests"] += len(texts)
-                vectors = await nova_embeddings(texts, region=args.region, concurrency=settings["max_concurrency"])
+                try:
+                    vectors = await nova_embeddings(texts, region=args.region, concurrency=settings["max_concurrency"])
+                except NovaThrottle:
+                    return httpx.Response(429, headers={"retry-after": "10"})
                 # InvokeModel does not report monetary cost or token counts here.
                 # Omitting usage lets inference identify token estimates and unknown prices.
                 return httpx.Response(200, json={"model": model, "data": [
@@ -214,23 +218,6 @@ def main():
         asyncio.run(client.aclose())
         return metrics
 
-    results = {}
-    for kind in args.workloads:
-        results[kind] = {}
-        for cache in ("cold", "warm"):
-            samples = []
-            with tempfile.TemporaryDirectory(prefix="simcore-embedding-benchmark-") as root:
-                directory = Path(root) / "warm"
-                if cache == "warm":
-                    execute(kind, directory)
-                for repeat in range(args.repeats):
-                    samples.append(execute(kind, directory if cache == "warm" else Path(root) / str(repeat)))
-            results[kind][cache] = {
-                "samples": samples,
-                "median_seconds": statistics.median(sample["simulation_seconds"] for sample in samples),
-                "min_seconds": min(sample["simulation_seconds"] for sample in samples),
-                "max_seconds": max(sample["simulation_seconds"] for sample in samples),
-            }
     output = {
         "inference": ("live AWS Nova embeddings via AWS CLI; fixed chat replies; per-text provider calls"
                       if args.live_nova else "offline HTTP mock; deterministic vectors and fixed chat responses; no network"),
@@ -240,11 +227,51 @@ def main():
         "model_pins": pins.model_dump(mode="json"),
         "region": args.region if args.live_nova else None,
         "repeats": args.repeats, "mock_request_delay_ms": args.delay_ms, "settings": settings,
-        "results": results,
+        "results": {}, "status": "running",
     }
+    if args.resume and args.output.exists():
+        previous = json.loads(args.output.read_text())
+        for key in ("revision", "personas", "ticks", "settings", "region", "harness_sha256"):
+            if previous[key] != output[key]:
+                parser.error(f"resume requires matching {key}")
+        output["results"] = previous["results"]
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(output, indent=2) + "\n")
-    print(f"Saved offline benchmark: {args.output}")
+
+    def save():
+        temporary = args.output.with_suffix(".tmp")
+        temporary.write_text(json.dumps(output, indent=2) + "\n")
+        temporary.replace(args.output)
+
+    try:
+        for kind in args.workloads:
+            results = output["results"].setdefault(kind, {})
+            for cache in ("cold", "warm"):
+                samples = results.get(cache, {}).get("samples", [])
+                if len(samples) >= args.repeats:
+                    continue
+                with tempfile.TemporaryDirectory(prefix="simcore-embedding-benchmark-") as root:
+                    directory = Path(root) / "warm"
+                    if cache == "warm":
+                        print(f"{kind} warm: populating cache", flush=True)
+                        execute(kind, directory)
+                    for repeat in range(len(samples), args.repeats):
+                        print(f"{kind} {cache}: sample {repeat + 1}/{args.repeats}", flush=True)
+                        samples.append(execute(kind, directory if cache == "warm" else Path(root) / str(repeat)))
+                        results[cache] = {
+                            "samples": samples,
+                            "median_seconds": statistics.median(sample["simulation_seconds"] for sample in samples),
+                            "min_seconds": min(sample["simulation_seconds"] for sample in samples),
+                            "max_seconds": max(sample["simulation_seconds"] for sample in samples),
+                        }
+                        save()
+    except Exception as error:
+        output["status"] = "interrupted"
+        output["error_type"] = type(error).__name__
+        save()
+        raise
+    output["status"] = "complete"
+    save()
+    print(f"Saved benchmark: {args.output}")
 
 
 if __name__ == "__main__":
