@@ -169,3 +169,40 @@ def test_multiworld_failure_releases_active_snapshot_and_propagates(tmp_path):
         with pytest.raises(ValueError, match='injected failure'):
             trace_summary(views, run_id=entry.config.run_id)
     assert all(ref() is None for ref in refs)
+
+
+def test_snapshot_keeps_version_migration_and_newer_contract_refusal(tmp_path):
+    import pyarrow.parquet as pq
+    from simcore.trace import migrations
+    from simcore.schemas.errors import SchemaVersionError
+
+    _, view = finalized_view(tmp_path)
+    path = tmp_path / 'runs' / view._run_id / view._worlds[0] / 'events.parquet'
+    original = pq.read_table(path)
+    metadata = dict(original.schema.metadata)
+    metadata[b'contract_version'] = b'1.0.0'
+    pq.write_table(original.replace_schema_metadata(metadata), path)
+    with patch.object(migrations, 'load_partition_data', wraps=migrations.load_partition_data) as migrate:
+        with snapshot_scope(view) as snapshot:
+            assert snapshot.events(EventFilter())
+        assert migrate.call_count == 1
+        assert migrate.call_args.kwargs['written_version'] == '1.0.0'
+    metadata[b'contract_version'] = b'9.9.9'
+    pq.write_table(original.replace_schema_metadata(metadata), path)
+    with pytest.raises(SchemaVersionError, match='newer'):
+        with snapshot_scope(view):
+            pytest.fail('unsupported data reached snapshot consumers')
+
+
+def test_invalid_partition_is_rejected_before_snapshot_queries(tmp_path):
+    import json
+    from pydantic import ValidationError
+
+    _, view = finalized_view(tmp_path)
+    path = tmp_path / 'runs' / view._run_id / view._worlds[0] / 'partition.json'
+    metadata = json.loads(path.read_text())
+    metadata['header']['config']['brief_hash'] = 'f' * 64
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(ValidationError):
+        with snapshot_scope(view):
+            pytest.fail('invalid partition reached snapshot consumers')

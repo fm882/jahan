@@ -126,24 +126,24 @@ writing artifacts instead of initiating another trace-reading pass.
 
 ### Acceptance criteria
 
-- [ ] A normal CLI study and a study launched through the UI produce unchanged
+- [x] A normal CLI study and a study launched through the UI produce unchanged
       digests, clusters, findings, anomalies, summaries and rendered reports
       with deterministic inference inputs.
-- [ ] Full report generation and trace-summary generation together require one
+- [x] Full report generation and trace-summary generation together require one
       full partition load per finished world in the analysis operation.
-- [ ] Retained comparison data contains no full events, snapshot-owning views
+- [x] Retained comparison data contains no full events, snapshot-owning views
       or closures that keep a released snapshot alive.
-- [ ] Multiple scenarios and multiple seeds preserve scenario membership,
+- [x] Multiple scenarios and multiple seeds preserve scenario membership,
       replicate spread, thresholds, arithmetic ordering and evidence IDs.
-- [ ] Zero spread, missing measurements, scored and unscored intent, survey-only
+- [x] Zero spread, missing measurements, scored and unscored intent, survey-only
       turns and positive/negative movement retain existing anomaly behavior.
-- [ ] The old and prepared-data analysis entry points agree through shared
+- [x] The old and prepared-data analysis entry points agree through shared
       rules; there are no duplicate anomaly or trace derivations.
-- [ ] Completed-world reports in interrupted runs remain usable, and unfinished
+- [x] Completed-world reports in interrupted runs remain usable, and unfinished
       worlds retain existing summary behavior.
-- [ ] Report generation timing, artifact formats and completion-marker ordering
+- [x] Report generation timing, artifact formats and completion-marker ordering
       remain unchanged; a failed analysis does not report successful completion.
-- [ ] Multi-world success and injected-failure checks demonstrate one active
+- [x] Multi-world success and injected-failure checks demonstrate one active
       full-world snapshot and cleanup at scope exit.
 
 ---
@@ -200,3 +200,13 @@ this phase completes the comparative measurements and their write-up.
 - Phase 2: 30 checks passed (one known baseline web failure deselected),
   including multi-world event weak-reference release, injected failure cleanup,
   stable hash/order and mixed finalized/live summary coverage.
+
+- Phase 3: 144 analysis/sweep/report checks passed; explicit shared-pipeline
+  checks compare the original two-pass derivations, count one load per world
+  across report and summary, and prove event release on success and failure.
+  The broader regression run passed 609 checks, including scale, property,
+  CLI and UI lifecycle coverage. All 11 failures were reproduced on baseline
+  `5e7b06b` (six directly, five interface tests after sharing Node dependencies).
+- Follow-up trust checks: 36 targeted snapshot, prepared-analysis and anomaly
+  checks passed, including migration through the snapshot loader, newer-version
+  refusal and corrupt-partition rejection before snapshot queries.
