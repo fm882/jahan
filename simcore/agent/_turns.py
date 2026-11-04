@@ -102,7 +102,7 @@ def turns(
         for position, item in enumerate(prepared)
         if item.early is None and needs_query(item.job.state.memories, cfg.top_k[cfg.tier_for(item.job.task)])
     } if embed is not None else {}
-    recalled = embed_texts(queries, embed)
+    recalled = embed_texts(queries, embed, scope=_embedding_scope(prepared, "retrieval"))
     for position, item in enumerate(prepared):
         item.costs.extend(recalled.costs.get(position, ()))
         if position in queries and recalled.error is not None:
@@ -169,7 +169,7 @@ def turns(
                         intents.get(position),
                         probe_by_position.get(position),
                         cfg,
-                        embed,
+                        embed if second.get(position) is not None else None,
                     )
                 )
             except Exception as error:  # noqa: BLE001 — one outcome per job, whatever happened (ADR 0031)
@@ -186,7 +186,41 @@ def turns(
                         costs=tuple(entry.item.costs),
                     )
                 )
+    return _embed_memories(results, prepared, embed, positions={
+        position for position in range(len(prepared)) if second.get(position) is None
+    })
+
+
+def _embed_memories(results, prepared, embed, *, positions):
+    """Attach shared vectors to separate memory events, retaining each job's bill."""
+    if embed is None:
+        return tuple(results)
+    inputs = {
+        position: [memory.description for memory in outcome.memories]
+        for position, outcome in enumerate(results)
+        if position in positions and isinstance(outcome, CompletedTurn)
+    }
+    embedded = embed_texts(inputs, embed, scope=_embedding_scope(prepared, "memory"))
+    for position in inputs:
+        item = prepared[position]
+        item.costs.extend(embedded.costs[position])
+        if embedded.error is not None:
+            results[position] = _embedding_failure(item, embedded.error, "memory")
+            continue
+        try:
+            outcome = results[position]
+            memories = tuple(memory.model_copy(update={
+                "embedding": embedded.vectors[memory.description].astype("float32").tobytes(),
+                "embed_model_id": embedded.models[memory.description],
+            }) for memory in outcome.memories)
+            results[position] = outcome.model_copy(update={"memories": memories, "costs": tuple(item.costs)})
+        except Exception as error:
+            results[position] = _embedding_failure(item, error, "memory finalization")
     return tuple(results)
+
+
+def _embedding_scope(prepared, stage):
+    return stage + "|" + "|".join(item.job.presentation.impression.impression_id for item in prepared)
 
 
 def _bill(item: _Prepared, outcome: Completion | CallFailure | None) -> None:

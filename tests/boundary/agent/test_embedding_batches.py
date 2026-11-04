@@ -134,8 +134,8 @@ def test_shared_retrieval_vector_preserves_private_prompts_and_recorded_costs():
         )
         events.extend(recorded)
     embedded_costs = [event.payload for event in events if event.payload.kind == "cost" and event.payload.role.value == "embed"]
-    assert sum(cost.cost for cost in embedded_costs) == pytest.approx(0.03)
-    assert sum(cost.cost for cost in embedded_costs if cost.allocation) == pytest.approx(0.01)
+    assert sum(cost.cost for cost in embedded_costs) == pytest.approx(0.02)
+    assert all(cost.allocation is not None for cost in embedded_costs)
     assert all(type(event).model_validate_json(event.model_dump_json()) == event for event in events)
 
 
@@ -174,3 +174,35 @@ def test_mixed_cached_chunks_keep_zero_costs_on_their_consumers(tmp_path):
     assert result.costs[0][0].cache_hit and result.costs[0][0].cost == 0
     assert result.costs[2][0].cache_hit and result.costs[2][0].cost == 0
     assert result.costs[1][0].cost == 0.02
+
+
+def test_ordinary_memories_are_embedded_once_but_have_separate_identity():
+    from tests.boundary.agent.embedding_workload import CountingEmbed
+
+    embed = CountingEmbed()
+    outcomes = turns([make_job(index, n=index) for index in range(20)],
+                     chat=FakeChat(answering()), embed=embed, config=quiet_config())
+    assert len(embed.calls) == 1
+    assert len(embed.calls[0]) == 1
+    memories = [outcome.memories[0] for outcome in outcomes]
+    assert len({memory.memory_id for memory in memories}) == 20
+    assert len({memory.embedding for memory in memories}) == 1
+    assert all(outcome.costs[-1].allocation.denominator == 20 for outcome in outcomes)
+
+
+def test_memory_embedding_failure_retains_chat_costs_and_does_not_retry_texts():
+    class Broken(FakeEmbed):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def embed(self, texts):
+            self.calls.append(list(texts))
+            raise RuntimeError("down")
+
+    embed = Broken()
+    outcomes = turns([make_job(0), make_job(1)], chat=FakeChat(answering()),
+                     embed=embed, config=quiet_config())
+    assert len(embed.calls) == 1
+    assert all(isinstance(outcome, TurnFailure) for outcome in outcomes)
+    assert all(len(outcome.costs) == 1 and outcome.costs[0].role.value == "tier_a" for outcome in outcomes)

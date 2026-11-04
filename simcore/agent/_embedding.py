@@ -1,9 +1,11 @@
 """Stage-scoped embedding reuse and conservative allocation of physical bills."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from fractions import Fraction
+import hashlib
+import json
 
 import numpy as np
 
@@ -64,7 +66,7 @@ def _allocate(batch, texts, consumers, costs):
             }))
 
 
-def embed_texts(inputs: Mapping[int, Sequence[str]], embed) -> EmbeddedTexts:
+def embed_texts(inputs: Mapping[int, Sequence[str]], embed, *, scope: str | None = None) -> EmbeddedTexts:
     """One complete stage; repeated drafts owned by one job count as one consumer."""
     costs = {owner: [] for owner in inputs}
     if embed is None or not inputs:
@@ -88,6 +90,9 @@ def embed_texts(inputs: Mapping[int, Sequence[str]], embed) -> EmbeddedTexts:
         bills = getattr(getattr(failure, "failure", failure), "costs", ())
         batches = getattr(failure, "batches", ()) or (EmbedBatch(0, len(texts), tuple(bills)),)
     for batch in batches:
+        if scope is not None:
+            identity = json.dumps([scope, embed.model_id, batch.start, batch.stop, texts[batch.start:batch.stop]])
+            batch = replace(batch, billing_id=hashlib.sha256(identity.encode()).hexdigest())
         _allocate(batch, texts, consumers, costs)
     if error is not None:
         return EmbeddedTexts({}, {}, costs, error)
