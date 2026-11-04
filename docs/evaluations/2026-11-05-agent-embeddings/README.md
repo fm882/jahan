@@ -140,40 +140,17 @@ After the final code changes, the affected agent, inference, runner, trace,
 analysis and property suite passes **1,244 tests** in 130.20 seconds. Commands,
 revisions and baseline failure IDs are in [verification.json](verification.json).
 
-## Reproduction
+## Historical reproduction
 
-Use the project Python environment and the committed benchmark harness. Export
-the baseline revision into a temporary directory, preserving an identical copy
-of the local ontology fixture used by the test builders. The fixture is not part
-of the baseline Git archive. The fixture SHA-256 is `dd5d517801430de61715a2866b46e2c13b6b9c54c84d57c8c64179695ad694b1`.
+The benchmark harness was removed after validation at the project owner's
+request. The scripts remain available in Git revision `7de727f`, alongside the
+source revisions and configuration recorded in the raw result files. Use an
+isolated checkout of that revision to reproduce the archived measurements.
 
-```sh
-embedding_baseline=$(mktemp -d)
-git archive 7d757cc | tar -x -C "$embedding_baseline"
-mkdir -p "$embedding_baseline/ontologies/beverage_protein"
-cp ontologies/beverage_protein/1.0.0.json "$embedding_baseline/ontologies/beverage_protein/1.0.0.json"
-
-.venv/bin/python benchmarks/agent_embeddings.py \
-  --source "$embedding_baseline" --revision 7d757cc --repeats 5 \
-  --output /tmp/embedding-offline-baseline.json
-.venv/bin/python benchmarks/agent_embeddings.py \
-  --revision 7de727f --repeats 5 \
-  --output /tmp/embedding-offline-optimized.json
-```
-
-Live commands require the project owner's inference authorization and configured
-AWS CLI credentials. They make billable provider calls. No secrets belong in
-command arguments or evaluation artifacts.
-
-```sh
-.venv/bin/python benchmarks/agent_embeddings.py \
-  --source "$embedding_baseline" --revision 7d757cc \
-  --live-nova --region us-east-1 --provider-rpm 18 --repeats 2 \
-  --output /tmp/embedding-live-baseline.json
-.venv/bin/python benchmarks/agent_embeddings.py \
-  --revision 7de727f --live-nova --region us-east-1 --provider-rpm 18 --repeats 2 \
-  --output /tmp/embedding-live-optimized.json
-```
+The local ontology fixture used by the test builders has SHA-256
+`dd5d517801430de61715a2866b46e2c13b6b9c54c84d57c8c64179695ad694b1`.
+Live reproduction requires explicit inference authorization and AWS CLI
+credentials; it makes billable provider calls.
 
 ## Acceptance audit
 
