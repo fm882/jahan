@@ -70,6 +70,5 @@ def analyze_record(
                                     replicate_spread=summary.belief_move_spread)
         cell["anomalies"] = detected.anomalies
         cell["unmeasured"] = detected.unmeasured
-        del cell["seed"]
     return {"digests": digests, "worlds": ordered, "summaries": summaries,
             "trace_summary": builder.finish()}

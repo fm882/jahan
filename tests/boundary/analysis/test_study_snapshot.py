@@ -36,7 +36,7 @@ def reference_analysis(views, cells, population, embed):
                          seed=seed, world_id=world, clusters=clusters, digest=outcome)
         detected = detect_anomalies(view, digest=outcome,
                                     replicate_spread=summaries[canonical_hash(scenario)].belief_move_spread)
-        worlds[world] = dict(scenario=scenario, digest=outcome, findings=found, clusters=clusters,
+        worlds[world] = dict(scenario=scenario, seed=seed, digest=outcome, findings=found, clusters=clusters,
                              reasons=reasons, anomalies=detected.anomalies, unmeasured=detected.unmeasured)
     return dict(digests=digests, summaries=summaries, worlds=worlds,
                 trace_summary=trace_summary(views, run_id=next(iter(views.values()))._run_id))
