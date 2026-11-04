@@ -206,3 +206,14 @@ def test_invalid_partition_is_rejected_before_snapshot_queries(tmp_path):
     with pytest.raises(ValidationError):
         with snapshot_scope(view):
             pytest.fail('invalid partition reached snapshot consumers')
+
+
+@pytest.mark.parametrize('persona_id', [[], {}, None, 1])
+def test_invalid_persona_arguments_keep_the_existing_validation_error(tmp_path, persona_id):
+    _, view = finalized_view(tmp_path)
+    with pytest.raises(Exception) as expected:
+        view.beliefs(persona_id)
+    with snapshot_scope(view) as snapshot:
+        with pytest.raises(type(expected.value)) as actual:
+            snapshot.beliefs(persona_id)
+    assert str(actual.value) == str(expected.value)

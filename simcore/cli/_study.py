@@ -675,8 +675,8 @@ def finish_progress(handles: "StudyHandles", result: RunResult) -> None:
 def analyze_study(handles: StudyHandles, result: RunResult) -> dict:
     """Derive digests, findings, clusters and anomalies from the record, per world.
 
-    Only worlds that reached their horizon are read: a paused world has no whole record
-    to derive from, and its artefacts are the trace itself.
+    Completed worlds receive full analysis. All recorded worlds also contribute
+    their visible record to the prepared trace summary in the same operation.
     """
     store, config = handles.store, handles.config
     completed = {outcome.world_id for outcome in result.outcomes if outcome.status is WorldStatus.COMPLETED}
@@ -701,10 +701,10 @@ def analyze_study(handles: StudyHandles, result: RunResult) -> dict:
 def write_trace_summary(handles: StudyHandles, result: RunResult, *, summary=None) -> dict:
     """Write `trace-summary.json` over every world that has any record.
 
-    A finished run's worlds answer from their finalized record, a paused run's
-    from its live one — a live view shows every closed tick and nothing more, so
-    a paused run writes what it has. The summary joins the five shapes and nothing
-    else; the CLI derives nothing.
+    Finalized worlds reuse their immutable record; unfinished worlds retain their
+    live visibility rules, including closed ticks and immediate world records.
+    A prepared summary avoids reopening partitions after report analysis. The
+    summary joins the five shapes; the CLI derives nothing.
     """
     if summary is None:
         views = {}

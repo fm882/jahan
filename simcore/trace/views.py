@@ -114,8 +114,11 @@ class SnapshotTraceView(_ViewBase):
         return _derive.filter_events(candidates, asked)
 
     def beliefs(self, persona_id: str) -> BeliefHistory:
-        self._all_events()
-        return _derive.derive_beliefs(self._personas.get(persona_id, ()), persona_id)
+        events = self._all_events()
+        # Preserve the derivation's validation errors for non-string inputs,
+        # including unhashable values that cannot be used as index keys.
+        candidates = self._personas.get(persona_id, ()) if isinstance(persona_id, str) else events
+        return _derive.derive_beliefs(candidates, persona_id)
 
     def resolve(self, trace_ids: Iterable[str]) -> tuple[TraceEvent, ...]:
         self._all_events()
