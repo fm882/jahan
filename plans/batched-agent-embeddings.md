@@ -274,33 +274,40 @@ artifact. Stop short of merging unless subsequently instructed.
 
 ### Acceptance criteria
 
-- [ ] Before the first model-backed test or benchmark, the user is informed and
+- [x] Before the first model-backed test or benchmark, the user is informed and
       supplies the necessary inference details. Until then, the live section
       remains pending; deterministic checks can proceed after implementation
       authorization.
-- [ ] Controlled baseline comparisons verify retrieved IDs, prompts, reactions,
+- [x] Controlled baseline comparisons verify retrieved IDs, prompts, reactions,
       belief changes, memory content and final state with fixed responses and
       deterministic embeddings. Budget limits do not truncate equivalence runs.
-- [ ] The 20–50-persona comparison exercises both embedding stages over multiple
+- [x] The 20–50-persona comparison exercises both embedding stages over multiple
       ticks and includes reflection, with bounded run settings recorded.
-- [ ] Each result records revisions, fixture/workload, persona and tick counts,
+- [x] Each result records revisions, fixture/workload, persona and tick counts,
       model pins, inference settings, cache preparation, repetitions and observed
       timing variation. Keep credentials out of evaluation artifacts.
-- [ ] Measurements include total simulation time, preparation, chat and memory
+- [x] Measurements include total simulation time, preparation, chat and memory
       finalization time, port invocations, upstream requests, unique submitted
       texts, cache hits, tokens, billed costs and allocated totals. Downstream
       report generation is timed separately.
-- [ ] Costs reconcile in recorded traces and aggregate ledgers, including failed
+- [x] Costs reconcile in recorded traces and aggregate ledgers, including failed
       attempts. Existing budget enforcement remains functional with allocations.
 - [ ] Repeated controlled and bounded end-to-end comparisons demonstrate lower
       elapsed time beyond observed variation. Fewer calls alone are insufficient;
       any unmet performance gate is reported as unresolved rather than passed.
-- [ ] Cold-cache and warm-cache evidence is reported separately with all workload
+- [x] Cold-cache and warm-cache evidence is reported separately with all workload
       results; no claim of equal benefit in every case or production-scale proof.
-- [ ] Relevant correctness and integration checks pass after final cleanup; no
+- [x] Relevant correctness and integration checks pass after final cleanup; no
       redundant execution path, feature flag or persistent cache remains.
 - [ ] Evaluation artifacts, remaining limitations and final diff are ready for
       review. No implementation or merge is performed by creating this plan.
+
+Local evidence: all 50 paired offline signatures match; the cold real-runner
+comparison improves beyond observed timing variation. Full-suite results are
+2,163 passed, 12 failed, 2 skipped; all 12 failures reproduce on the baseline.
+Warm-cache regressions and overlapping ranges are retained in the evaluation.
+The final performance and review bullets stay open until the quota-paced live
+comparison is complete. See the [evaluation](../docs/evaluations/2026-11-05-agent-embeddings/README.md).
 
 ## Completion evidence
 
