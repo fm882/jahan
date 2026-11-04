@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--delay-ms", type=float, default=2)
     parser.add_argument("--live-nova", action="store_true", help="explicitly invoke the authorized Bedrock Nova model")
     parser.add_argument("--region", default="us-east-1")
+    parser.add_argument("--provider-rpm", type=int, default=18, help="shared live Nova request limit; account quota is 20 RPM")
     parser.add_argument("--workloads", nargs="+", choices=["empty", "repeated", "unique", "reflections", "simulation"],
                         default=None)
     parser.add_argument("--output", type=Path, required=True)
@@ -33,6 +34,8 @@ def main():
     args.workloads = args.workloads or (["simulation"] if args.live_nova else ["empty", "repeated", "unique", "reflections", "simulation"])
     if args.live_nova and args.workloads != ["simulation"]:
         parser.error("live Nova validation uses the simulation workload with memories grown from live embeddings")
+    if not 1 <= args.provider_rpm <= 20:
+        parser.error("provider RPM must fit the verified 20 RPM account quota")
     if not 20 <= args.personas <= 50 or args.ticks < 3 or args.repeats < 2 or args.delay_ms < 0:
         parser.error("use 20–50 personas, at least three ticks, two repetitions and nonnegative delay")
     sys.path.insert(0, str(args.source.resolve()))
@@ -52,7 +55,8 @@ def main():
 
     if args.live_nova:
         # This helper belongs to the harness, even when --source selects old code.
-        from bedrock_nova import MODEL, NovaThrottle, embeddings as nova_embeddings
+        from bedrock_nova import MODEL, NovaPacer, NovaThrottle, embeddings as nova_embeddings
+        pacer = NovaPacer(args.provider_rpm)
     model = MODEL if args.live_nova else "benchmark/embed"
     pins = ModelPins.model_validate({"tier_a": "fake/chat", "tier_b": "fake/chat", "embed": model})
     settings = {
@@ -77,7 +81,7 @@ def main():
             if args.live_nova:
                 metrics["upstream_requests"] += len(texts)
                 try:
-                    vectors = await nova_embeddings(texts, region=args.region, concurrency=settings["max_concurrency"])
+                    vectors = await nova_embeddings(texts, region=args.region, pacer=pacer, concurrency=settings["max_concurrency"])
                 except NovaThrottle:
                     return httpx.Response(429, headers={"retry-after": "10"})
                 # InvokeModel does not report monetary cost or token counts here.
@@ -226,12 +230,13 @@ def main():
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "model_pins": pins.model_dump(mode="json"),
         "region": args.region if args.live_nova else None,
+        "provider_requests_per_minute": args.provider_rpm if args.live_nova else None,
         "repeats": args.repeats, "mock_request_delay_ms": args.delay_ms, "settings": settings,
         "results": {}, "status": "running",
     }
     if args.resume and args.output.exists():
         previous = json.loads(args.output.read_text())
-        for key in ("revision", "personas", "ticks", "settings", "region", "harness_sha256"):
+        for key in ("revision", "personas", "ticks", "settings", "region", "harness_sha256", "provider_requests_per_minute"):
             if previous[key] != output[key]:
                 parser.error(f"resume requires matching {key}")
         output["results"] = previous["results"]
@@ -245,18 +250,22 @@ def main():
     try:
         for kind in args.workloads:
             results = output["results"].setdefault(kind, {})
-            for cache in ("cold", "warm"):
-                samples = results.get(cache, {}).get("samples", [])
-                if len(samples) >= args.repeats:
-                    continue
-                with tempfile.TemporaryDirectory(prefix="simcore-embedding-benchmark-") as root:
-                    directory = Path(root) / "warm"
-                    if cache == "warm":
+            with tempfile.TemporaryDirectory(prefix="simcore-embedding-benchmark-") as root:
+                populated = None
+                for cache in ("cold", "warm"):
+                    samples = results.get(cache, {}).get("samples", [])
+                    if len(samples) >= args.repeats:
+                        continue
+                    directory = populated if populated is not None else Path(root) / "warm"
+                    if cache == "warm" and populated is None:
                         print(f"{kind} warm: populating cache", flush=True)
                         execute(kind, directory)
                     for repeat in range(len(samples), args.repeats):
                         print(f"{kind} {cache}: sample {repeat + 1}/{args.repeats}", flush=True)
-                        samples.append(execute(kind, directory if cache == "warm" else Path(root) / str(repeat)))
+                        cache_path = directory if cache == "warm" else Path(root) / str(repeat)
+                        samples.append(execute(kind, cache_path))
+                        if cache == "cold":
+                            populated = cache_path
                         results[cache] = {
                             "samples": samples,
                             "median_seconds": statistics.median(sample["simulation_seconds"] for sample in samples),

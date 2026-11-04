@@ -18,11 +18,28 @@ class NovaThrottle(RuntimeError):
     pass
 
 
-async def embeddings(texts, *, region, concurrency=16):
+class NovaPacer:
+    """One provider-wide request schedule, shared across chunks and cache conditions."""
+
+    def __init__(self, requests_per_minute=18):
+        self.interval = 60 / requests_per_minute
+        self.next_request = 0.0
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        loop = asyncio.get_running_loop()
+        async with self.lock:
+            scheduled = max(loop.time(), self.next_request)
+            self.next_request = scheduled + self.interval
+        await asyncio.sleep(max(0, scheduled - loop.time()))
+
+
+async def embeddings(texts, *, region, pacer, concurrency=16):
     ceiling = asyncio.Semaphore(concurrency)
 
     async def one(text):
         async with ceiling:
+            await pacer.acquire()
             with tempfile.TemporaryDirectory(prefix="simcore-nova-") as directory:
                 request = Path(directory) / "request.json"
                 response = Path(directory) / "response.json"
