@@ -1,7 +1,8 @@
 # PRD — Batched agent embeddings
 
-Status: implementation complete through the reflection-memory stage; final
-performance validation in progress. See the [implementation plan](../../plans/batched-agent-embeddings.md).
+Status: implemented and verified on the implementation branch. See the
+[completed plan](../../plans/batched-agent-embeddings.md) and
+[evaluation](../evaluations/2026-11-05-agent-embeddings/README.md).
 
 ## Problem Statement
 
@@ -313,8 +314,11 @@ failure costs is an implementation detail to settle against the existing cost
 and trace contracts. The accounting and failure requirements above are fixed;
 an implementation must not silently weaken them to fit the current flat result.
 
-The implementation is on the dedicated branch. Deterministic baseline fixtures
-and local correctness checks are complete; final performance results remain
-pending. The user supplied the Nova embedding model and authorized existing AWS
-CLI credentials in any working region. A live embedding smoke succeeded in
-us-east-1; repeated comparisons use fixed chat responses to isolate embedding work.
+All five implementation phases are complete on the dedicated branch. Final
+affected checks pass (1,244 tests). The broader suite has 12 failures reproduced
+on the baseline and documented in the evaluation. Two repetitions per cache
+condition with 20 personas, three ticks and live Nova embeddings in us-east-1
+show a 39.4% cold-cache median runtime reduction under the account quota. Fixed
+chat responses isolate embedding work; this is a bounded performance result.
+All outcome, prompt and recorded-state signatures match in these live samples.
+No merge has been performed.

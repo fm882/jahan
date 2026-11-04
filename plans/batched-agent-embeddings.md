@@ -4,8 +4,9 @@
 >
 > Status: five-phase breakdown approved by the user on 2026-11-04.
 > Implementation branch: `feat/batched-agent-embeddings`.
-> Phases 1–4 implemented and verified in small commits. Phase 5 is in progress:
-> local checks pass; repeated live Nova comparisons are running.
+> All five phases implemented and verified in small commits. The final affected
+> suite passes 1,244 tests; bounded offline and live comparisons are complete.
+> No merge performed. See the [evaluation](../docs/evaluations/2026-11-05-agent-embeddings/README.md).
 
 ## Architectural decisions
 
@@ -292,22 +293,28 @@ artifact. Stop short of merging unless subsequently instructed.
       report generation is timed separately.
 - [x] Costs reconcile in recorded traces and aggregate ledgers, including failed
       attempts. Existing budget enforcement remains functional with allocations.
-- [ ] Repeated controlled and bounded end-to-end comparisons demonstrate lower
+- [x] Repeated controlled and bounded end-to-end comparisons demonstrate lower
       elapsed time beyond observed variation. Fewer calls alone are insufficient;
       any unmet performance gate is reported as unresolved rather than passed.
 - [x] Cold-cache and warm-cache evidence is reported separately with all workload
       results; no claim of equal benefit in every case or production-scale proof.
 - [x] Relevant correctness and integration checks pass after final cleanup; no
       redundant execution path, feature flag or persistent cache remains.
-- [ ] Evaluation artifacts, remaining limitations and final diff are ready for
+- [x] Evaluation artifacts, remaining limitations and final diff are ready for
       review. No implementation or merge is performed by creating this plan.
 
 Local evidence: all 50 paired offline signatures match; the cold real-runner
 comparison improves beyond observed timing variation. Full-suite results are
 2,163 passed, 12 failed, 2 skipped; all 12 failures reproduce on the baseline.
 Warm-cache regressions and overlapping ranges are retained in the evaluation.
-The final performance and review bullets stay open until the quota-paced live
-comparison is complete. See the [evaluation](../docs/evaluations/2026-11-05-agent-embeddings/README.md).
+Final affected checks pass: 1,244 tests. All eight live samples preserve the same
+outcome, prompt and recorded-state signatures. Under the verified 20 RPM Nova
+account quota (paced at 18 RPM), cold median runtime drops from 361.567 to
+219.240 seconds, with non-overlapping timing ranges. Warm median runtime drops
+from 0.177 to 0.094 seconds, also with non-overlapping ranges. Provider calls drop
+from 104 to 66 and embedding-port invocations from 400 to 8. All final raw samples,
+earlier measurement limitations, costs that remain unknown, and reproduced
+baseline failures are in the [evaluation](../docs/evaluations/2026-11-05-agent-embeddings/README.md).
 
 ## Completion evidence
 
