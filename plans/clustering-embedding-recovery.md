@@ -262,24 +262,35 @@ separate recovery implementation.
 
 ### Acceptance criteria
 
-- [ ] An analysis failure followed by same-ID resume produces report, digest,
+- [x] An analysis failure followed by same-ID resume produces report, digest,
       trace summary and result artifacts, then publishes completion.
-- [ ] Completed worlds make no repeated persona-turn calls, retain identical
+- [x] Completed worlds make no repeated persona-turn calls, retain identical
       finalized events/hashes and receive no duplicate lifecycle events.
-- [ ] A mixed completed/unfinished fixture resumes only after saved complete
+- [x] A mixed completed/unfinished fixture resumes only after saved complete
       ticks; completed worlds remain untouched.
-- [ ] Changed study inputs are refused by existing drift guards unless the
+- [x] Changed study inputs are refused by existing drift guards unless the
       operator makes a separate explicit decision; no automatic force is used.
-- [ ] Multiple scenarios/seeds keep clusters, exclusions and counts attached
+- [x] Multiple scenarios/seeds keep clusters, exclusions and counts attached
       to the correct worlds/categories in report artifacts and UI selection.
-- [ ] All-valid analytical results and stable output ordering match baseline;
+- [x] All-valid analytical results and stable output ordering match baseline;
       older reports remain readable with unknown historical coverage.
-- [ ] Fake inference checks establish bounded call counts and accurate costs
+- [x] Fake inference checks establish bounded call counts and accurate costs
       across successful recovery, exclusions and exhausted provider failures.
-- [ ] Relevant analysis, inference/cache, report, study and resume checks pass;
+- [x] Relevant analysis, inference/cache, report, study and resume checks pass;
       any unrelated failures are compared to baseline and documented.
 
 ---
+
+Phase 5 evidence: offline same-ID recovery covers two scenarios and two seeds,
+unchanged partition hashes, no repeated persona calls, healthy/partial/unavailable
+worlds, artifact-before-completion ordering and input-drift refusal. Ten focused
+resume/contract tests passed. The broad run had 632 passes and 11 unrelated
+failures; all 11 were reproduced individually at pre-fix commit 5f936a3 in an
+isolated worktree using the same local corpus/anchor fixtures. They concern
+missing brief routes, old anchor expectations, empty Parquet fixtures and a
+pre-existing bare-502 proxy assertion. A new Chromium report test passed for
+unavailable clustering, original evidence links and legacy coverage. All 47
+frontend tests and frontend types passed. No real provider calls were used.
 
 ## Phase 6: Recover the original 50-persona run
 
