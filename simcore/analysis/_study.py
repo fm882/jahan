@@ -18,17 +18,19 @@ from ._trace_summary import TraceSummaryBuilder
 
 
 def _prepare_world(view, *, scenario, seed, population, embed, pinned_embed_model, world_id):
+    embedding_calls = []
     outcome = digest(view, scenario=scenario, population=population, seed=seed,
                      pinned_embed_model=pinned_embed_model)
     clusters = cluster_objections(view, embed=embed, pinned_embed_model=pinned_embed_model,
-                                  world_id=world_id)
+                                  world_id=world_id, embedding_calls=embedding_calls)
     reasons = cluster_reasons(view, embed=embed, pinned_embed_model=pinned_embed_model,
-                              world_id=world_id)
+                              world_id=world_id, embedding_calls=embedding_calls)
     found = findings(view, embed=embed, pinned_embed_model=pinned_embed_model,
                      seed=seed, world_id=world_id, clusters=clusters, digest=outcome)
     return {
         "scenario": scenario, "seed": seed, "digest": outcome, "findings": found,
         "clusters": clusters, "reasons": reasons,
+        "embedding_calls": tuple(embedding_calls),
     }, prepare_anomalies(view)
 
 

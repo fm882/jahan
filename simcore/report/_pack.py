@@ -9,7 +9,7 @@ commit the run came from. Rendering reads nothing but these three arguments.
 
 from dataclasses import dataclass, field
 
-from simcore.schemas import Anomaly, BriefPack, ObjectionCluster, Report, RunConfig, TrustStatement
+from simcore.schemas import AnalysisEmbeddingCall, Anomaly, BriefPack, ObjectionCluster, Report, RunConfig, TrustStatement
 from simcore.schemas.base import SCHEMA_VERSION
 
 
@@ -37,6 +37,7 @@ class ReportPack:
     anomalies: tuple[Anomaly, ...] = ()
     clusters: tuple[ObjectionCluster, ...] = ()
     reasons: tuple[ObjectionCluster, ...] = ()
+    analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...] = ()
     forced_from: tuple[str, ...] = ()
     forced_inputs: tuple[str, ...] = ()
     contract_version: str = SCHEMA_VERSION
@@ -78,6 +79,10 @@ class ReportPack:
             ),
         )
         object.__setattr__(self, "forced_from", tuple(self.forced_from))
+        object.__setattr__(self, "analysis_embedding_calls", tuple(
+            item if isinstance(item, AnalysisEmbeddingCall) else AnalysisEmbeddingCall.model_validate(item)
+            for item in self.analysis_embedding_calls
+        ))
         object.__setattr__(self, "forced_inputs", tuple(self.forced_inputs))
 
 

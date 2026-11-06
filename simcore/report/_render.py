@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from simcore.brief import assumptions_of
 from simcore.schemas import (
+    AnalysisEmbeddingCall,
     Finding,
     OutcomeDigest,
     Report,
@@ -154,6 +155,7 @@ class _Document:
     template_hashes: tuple[tuple[str, str], ...]
     anchor_set_hashes: tuple[tuple[str, str], ...]
     validation: str
+    analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...]
     scenarios: tuple[_ScenarioSection, ...] = ()
 
 
@@ -268,6 +270,7 @@ def _build(findings: tuple[Finding, ...], digests: tuple[OutcomeDigest, ...], pa
         template_hashes=tuple(sorted(pack.config.template_hashes.items())),
         anchor_set_hashes=tuple(sorted(pack.config.anchor_set_hashes.items())),
         validation=pack.validation.strip(),
+        analysis_embedding_calls=pack.analysis_embedding_calls,
         scenarios=tuple(
             _ScenarioSection(
                 variant_id=scenario.variant.variant_id,
@@ -327,6 +330,12 @@ def _to_markdown(doc: _Document) -> str:
     findings, how far to trust it, and the method — with every world's full digest as an appendix."""
     lines = ["# Study report", ""]
     lines.extend(["Run " + doc.run_id + " · contract " + doc.contract_version, ""])
+    if doc.analysis_embedding_calls:
+        lines.extend(["Analysis embedding calls (separate from simulation spend):", ""])
+        for call in doc.analysis_embedding_calls:
+            lines.append(f"- {call.world_id or 'unnamed world'} · {call.category} · {call.attempt}: "
+                         + ", ".join(f"{cost.cost!r} USD ({cost.route.value})" for cost in call.costs))
+        lines.append("")
 
     lines.extend(["## The answer", ""])
     lines.extend(["What the simulation measured. How far to rely on it is stated under Trust.", ""])
@@ -529,6 +538,7 @@ def _to_data(doc: _Document) -> dict:
         "run_id": doc.run_id,
         "config_hash": doc.config_hash,
         "engine_commit": doc.engine_commit,
+        "analysis_embedding_calls": [call.model_dump(mode="json") for call in doc.analysis_embedding_calls],
         "forced_from": list(doc.forced_from),
         "forced_inputs": list(doc.forced_inputs),
         "trust": {"level": doc.trust_level, "caveats": list(doc.trust_caveats)},
@@ -645,6 +655,7 @@ def render(
         "anomalies": pack.anomalies,
         "objection_clusters": pack.clusters,
         "reason_clusters": pack.reasons,
+        "analysis_embedding_calls": pack.analysis_embedding_calls,
         "digests": validated_digests,
     })
     doc = _build(report.findings, report.digests, pack)

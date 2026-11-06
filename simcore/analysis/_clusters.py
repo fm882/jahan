@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from simcore.schemas import ObjectionCluster, VerbatimGrouping, VerbatimRecord
+from simcore.schemas import AnalysisEmbeddingCall, ObjectionCluster, VerbatimGrouping, VerbatimRecord
 
 
 # The share of the run's own objection pairs a group must be as similar as, when no threshold is given: groups join
@@ -24,14 +24,16 @@ _REFUSING = frozenset({"reject", "complain", "downvote"})
 
 def cluster_objections(view, *, embed, threshold: float | None = None, seed: int = 0,
                        pinned_embed_model: str | None = None,
-                       world_id: str | None = None) -> tuple[ObjectionCluster, ...]:
+                       world_id: str | None = None,
+                       embedding_calls: list[AnalysisEmbeddingCall] | None = None) -> tuple[ObjectionCluster, ...]:
     """Group one world's objections — and only its objections — by embedding similarity.
 
     `objection_records` chooses what counts as an objection from what each turn recorded; `cluster_verbatims`
     groups them. With no `threshold`, the cut is relative to this run's own similarities and recorded on every
     cluster, so a cluster always says the threshold it was grouped at."""
     return cluster_verbatims(objection_records(view), embed=embed, threshold=threshold, seed=seed,
-                             pinned_embed_model=pinned_embed_model, world_id=world_id)
+                             pinned_embed_model=pinned_embed_model, world_id=world_id,
+                             embedding_calls=embedding_calls)
 
 
 def objection_records(view) -> list[VerbatimRecord]:
@@ -62,10 +64,12 @@ _ENDORSING = frozenset({"buy", "like", "upvote", "repost"})
 
 def cluster_reasons(view, *, embed, threshold: float | None = None, seed: int = 0,
                     pinned_embed_model: str | None = None,
-                    world_id: str | None = None) -> tuple[ObjectionCluster, ...]:
+                    world_id: str | None = None,
+                    embedding_calls: list[AnalysisEmbeddingCall] | None = None) -> tuple[ObjectionCluster, ...]:
     """Group one world's reasons to buy — the counterpart of its objections — the same way (ADR 0053)."""
     return cluster_verbatims(reason_records(view), embed=embed, threshold=threshold, seed=seed,
-                             pinned_embed_model=pinned_embed_model, world_id=world_id)
+                             pinned_embed_model=pinned_embed_model, world_id=world_id,
+                             embedding_calls=embedding_calls, category="reason")
 
 
 def reason_records(view) -> list[VerbatimRecord]:
@@ -93,10 +97,12 @@ def reason_records(view) -> list[VerbatimRecord]:
 
 def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: float | None = None, seed: int = 0,
                       pinned_embed_model: str | None = None,
-                      world_id: str | None = None) -> tuple[ObjectionCluster, ...]:
+                      world_id: str | None = None,
+                      embedding_calls: list[AnalysisEmbeddingCall] | None = None,
+                      category: str = "objection") -> tuple[ObjectionCluster, ...]:
     """Group verbatims by average-linkage cosine similarity: two groups join while their members are, on average,
     at least `threshold` alike. Average linkage does not chain the way single linkage does — one bridging sentence
-    cannot pull two topics into one group. `embed` is called exactly once, in deterministic order. When the run's
+    cannot pull two topics into one group. Valid inputs are embedded once; invalid rows get one fresh retry. When the run's
     pin is given, any other embedding model is refused: a digest cannot be computed in a different embedding space
     from the study it describes."""
     if threshold is not None and not 0.0 <= threshold <= 1.0:
@@ -109,7 +115,8 @@ def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: fl
     records = sorted(records, key=lambda record: record.event_id)
     if not records:
         return ()
-    vectors = _embed_once(embed, [record.text for record in records])
+    vectors = _embed_once(embed, [record.text for record in records], embedding_calls=embedding_calls,
+                          world_id=world_id, category=category)
     cut = threshold if threshold is not None else _relative_threshold(vectors)
     clusters = []
     for members in _ordered_components(_average_linkage(vectors, cut), records):
@@ -156,13 +163,32 @@ def _ordered_verbatims(view) -> list[VerbatimRecord]:
     return sorted(records, key=lambda record: record.event_id)
 
 
-def _embed_once(embed, texts: Sequence[str]) -> np.ndarray:
-    result = embed.embed(texts)
-    vectors = np.asarray(result.vectors, dtype=np.float64)
+def _embed_once(embed, texts: Sequence[str], *, embedding_calls=None, world_id=None,
+                category="objection") -> np.ndarray:
+    def request(texts, *, retry=False):
+        result = embed.embed(texts, bypass_cache=True) if retry else embed.embed(texts)
+        if result.model_id != embed.model_id:
+            raise ValueError("clustering embedding result does not match the pinned model")
+        if embedding_calls is not None:
+            embedding_calls.append(AnalysisEmbeddingCall(
+                world_id=world_id, category=category, attempt="retry" if retry else "initial",
+                costs=result.costs,
+            ))
+        return np.asarray(result.vectors, dtype=np.float64)
+
+    vectors = request(texts)
     if vectors.shape[0] != len(texts):
         raise ValueError(f"embedding returned {vectors.shape[0]} vectors for {len(texts)} verbatims")
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
+    invalid = np.flatnonzero(norms[:, 0] == 0.0)
+    if len(invalid):
+        replacement = request([texts[index] for index in invalid], retry=True)
+        if replacement.shape != (len(invalid), vectors.shape[1]):
+            raise ValueError("retry embedding shape does not match the submitted verbatims")
+        vectors[invalid] = replacement
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        if np.any(norms == 0.0):
+            raise ValueError("clustering embeddings still contain zero vectors after a fresh retry")
     return vectors / norms
 
 

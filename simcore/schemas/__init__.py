@@ -115,6 +115,7 @@ from .population import (
 )
 from .result import RunResult, WorldOutcome
 from .report import (
+    AnalysisEmbeddingCall,
     Anomaly,
     CalibrationRef,
     Finding,
@@ -322,6 +323,7 @@ __all__ = [
     "NonEmptyStr",
     "NonNegativeInt",
     "ObjectionCluster",
+    "AnalysisEmbeddingCall",
     "OneOf",
     "OntologyDrafting",
     "OntologyHash",

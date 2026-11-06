@@ -4,7 +4,7 @@ joined with the run configuration they describe."""
 import math
 from collections import Counter
 from collections.abc import Iterable
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import AwareDatetime, Field, computed_field, model_validator
 
@@ -23,7 +23,7 @@ from .base import (
 from .enums import ActionKind, AnomalyKind, BeliefDim, Channel, Confidence, DegradationRung, FindingKind, TickUnit, TrustLevel
 from .run import PinnedModelId, RunConfig, WorldId
 from .sim import PMF5
-from .trace import EventId
+from .trace import CostRecorded, EventId
 
 # A benchmark must reach both floors before any calibrated trust level can be claimed — the same 0.80
 # the engine's own ordinal distribution gate and reference-set rank-stability checks hold themselves to.
@@ -149,6 +149,15 @@ class UnmeasuredAnomaly(SimBaseModel):
     scenario_hash: HashDigest
     reason: NonEmptyStr
     threshold: float
+
+
+class AnalysisEmbeddingCall(SimBaseModel):
+    """One analysis invocation's bills, separate from immutable simulation spend."""
+
+    world_id: WorldId | None = None
+    category: Literal["objection", "reason"]
+    attempt: Literal["initial", "retry"]
+    costs: tuple[CostRecorded, ...] = ()
 
 
 class ObjectionCluster(SimBaseModel):
@@ -476,6 +485,7 @@ class Report(SimBaseModel):
     objection_clusters: tuple[ObjectionCluster, ...] = ()
     # What persuaded, grouped exactly as objections are (ADR 0053): a quoted medoid and the verbatims it stands for.
     reason_clusters: tuple[ObjectionCluster, ...] = ()
+    analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...] = ()
     digests: tuple[OutcomeDigest, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
