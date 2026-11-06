@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from simcore.inference import EmbeddingFailure, ExecutionSettings, InferenceClient
+from simcore.ports.embed import InvalidEmbeddingData
 from simcore.schemas import (
     Completion,
     CostSource,
@@ -170,10 +171,10 @@ def test_malformed_billed_vectors_are_a_failure_with_their_cost_retained():
         return httpx.Response(200, content=json.dumps(payload).encode())
 
     client, _ = client_for(Recorder(malformed), max_retries=0)
-    with pytest.raises(EmbeddingFailure) as raised:
+    with pytest.raises(InvalidEmbeddingData) as raised:
         client.embed(["one"])
-    assert raised.value.failure.kind is FailureKind.INVALID_OUTPUT
-    assert raised.value.failure.costs[0].cost == 0.02
+    assert raised.value.costs[0].cost == 0.02
+    assert raised.value.result.model_id == EMBED
 
 
 def test_billed_retry_attempts_are_retained_on_eventual_success():
@@ -258,7 +259,68 @@ def test_a_zero_containing_batch_is_not_admitted_to_cache(tmp_path):
 
     recorder = Recorder(zeros)
     client, _ = client_for(recorder, cache_dir=tmp_path)
-    client.embed(["one", "two"])
-    client.embed(["one", "two"])
+    for _ in range(2):
+        with pytest.raises(InvalidEmbeddingData):
+            client.embed(["one", "two"])
     assert len(recorder.bodies) == 2
     assert list(tmp_path.rglob("*.json")) == []
+
+
+@pytest.mark.parametrize("poison", ["zero", "nan", "inf", "count", "ragged", "empty", "nonnumeric", "dimension", "served"])
+def test_invalid_cache_entries_are_misses_and_fresh_valid_data_repairs_them(tmp_path, poison):
+    recorder = Recorder(embed_reply())
+    client, _ = client_for(recorder, cache_dir=tmp_path)
+    first = client.embed(["one", "two"])
+    path = next(tmp_path.rglob("*.json"))
+    entry = json.loads(path.read_text())
+    if poison == "served":
+        entry["served_model_id"] = "outside-the-pin"
+    elif poison == "dimension":
+        entry["vectors"] = [[1.0, 0.0]] * 2
+    elif poison == "count":
+        entry["vectors"] = entry["vectors"][:1]
+    elif poison == "empty":
+        entry["vectors"] = [[], []]
+    elif poison == "ragged":
+        entry["vectors"][0] = [1.0]
+    elif poison == "nonnumeric":
+        entry["vectors"][0][0] = "broken"
+    elif poison == "zero":
+        entry["vectors"][0] = [0.0] * 4
+    else:
+        entry["vectors"][0][0] = float(poison)
+    path.write_text(json.dumps(entry))
+    fresh = client.embed(["one", "two"])
+    assert len(recorder.bodies) == 2 and client.stats.cache_hits == 0
+    assert np.array_equal(fresh.vectors, first.vectors)
+    cached = client.embed(["one", "two"])
+    assert client.stats.cache_hits == 1
+    assert np.array_equal(cached.vectors, fresh.vectors)
+
+
+@pytest.mark.parametrize("magnitude", [1e-300, 1e300])
+def test_extreme_finite_vectors_are_normalized_without_loss_of_direction(magnitude):
+    def extreme(request):
+        payload = embed_reply()(request).json()
+        payload["data"][0]["embedding"] = [magnitude, magnitude, 0.0, 0.0]
+        return httpx.Response(200, json=payload)
+
+    client, _ = client_for(Recorder(extreme))
+    result = client.embed(["one"])
+    assert np.allclose(result.vectors, [[2 ** -0.5, 2 ** -0.5, 0, 0]])
+    assert np.isfinite(result.vectors).all()
+
+
+def test_a_bad_sibling_vector_cannot_hide_a_pin_violation():
+    def build(request):
+        body = json.loads(request.content)
+        if body["input"] == ["zero"]:
+            payload = embed_reply()(request).json()
+            payload["data"][0]["embedding"] = [0.0] * 4
+            return httpx.Response(200, json=payload)
+        return embed_reply(model="outside-the-pin")(request)
+
+    client, _ = client_for(Recorder(build), embeddings_batch_size=1, max_retries=0)
+    with pytest.raises(EmbeddingFailure) as raised:
+        client.embed(["zero", "pin-violation"])
+    assert raised.value.failure.kind is FailureKind.PIN_FAILURE

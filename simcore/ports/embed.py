@@ -48,6 +48,58 @@ class EmbedResult:
     batches: tuple[EmbedBatch, ...] = ()
 
 
+class InvalidEmbeddingData(ValueError):
+    """Unusable provider data, optionally retaining reliably mapped rows and bills.
+
+    Ordinary callers still fail. Report analysis may inspect the result to retry
+    invalid rows without discarding usable siblings or inventing their mapping.
+    """
+
+    def __init__(self, detail: str, *, result: EmbedResult | None = None):
+        super().__init__(detail)
+        self.result = result
+        self.costs = result.costs if result is not None else ()
+        self.batches = result.batches if result is not None else ()
+
+
+def embedding_array(vectors, count: int, *, dimension: int | None = None) -> np.ndarray:
+    """Validate a trustworthy row mapping before any row is attached to evidence."""
+    try:
+        array = np.asarray(vectors)
+        if array.dtype.kind not in "iuf":
+            raise ValueError("embedding vectors must be numeric")
+        array = np.asarray(array, dtype=np.float64)
+    except (ValueError, TypeError, OverflowError) as error:
+        raise InvalidEmbeddingData("embedding vectors must form a numeric matrix") from error
+    if array.ndim != 2 or array.shape[0] != count or array.shape[1] == 0:
+        raise InvalidEmbeddingData("embedding vectors must have one nonempty row per submitted text")
+    if dimension is not None and array.shape[1] != dimension:
+        raise InvalidEmbeddingData("embedding dimensions do not match the pinned space")
+    return array
+
+
+def normalise_embeddings(array: np.ndarray, *, dtype=np.float64) -> tuple[np.ndarray, list[str | None]]:
+    """Keep ordinary normalization unchanged; scale only rows at numerical limits."""
+    finite = np.isfinite(array).all(axis=1)
+    nonzero = np.any(array != 0.0, axis=1)
+    reasons = [None if valid and nonempty else "non_finite" if not valid else "zero_vector"
+               for valid, nonempty in zip(finite, nonzero, strict=True)]
+    # Invalid rows are never used for distances; preserve their identity via reasons.
+    output = np.zeros(array.shape, dtype=dtype)
+    valid = finite & nonzero
+    with np.errstate(over="ignore", under="ignore", invalid="ignore", divide="ignore"):
+        ordinary = np.asarray(array[valid], dtype=dtype)
+        norms = np.linalg.norm(ordinary, axis=1, keepdims=True)
+        ordinary = ordinary / norms
+    safe = np.isfinite(ordinary).all(axis=1) & np.any(ordinary != 0.0, axis=1)
+    if (~safe).any():
+        extreme = array[valid][~safe]
+        scaled = extreme / np.max(np.abs(extreme), axis=1, keepdims=True)
+        ordinary[~safe] = scaled / np.linalg.norm(scaled, axis=1, keepdims=True)
+    output[valid] = ordinary
+    return output, reasons
+
+
 @runtime_checkable
 class EmbedPort(Protocol):
     model_id: str
