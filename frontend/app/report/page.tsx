@@ -291,6 +291,13 @@ export default function ReportPage() {
               </MethodRow>
               <MethodRow icon="shuffle" label="Fallbacks"><span className="mono sub">{r.method.fallbacks.length ? r.method.fallbacks.map((p) => `${p.role}: ${p.model_id}`).join(" · ") : "none"}</span></MethodRow>
               <MethodRow icon="shuffle" label="Seeds"><span className="mono">{r.method.seeds.join(", ")}</span></MethodRow>
+              {!!r.analysis_embedding_calls?.length && <MethodRow icon="info" label="Report analysis calls">
+                <p className="sub">These costs are separate from simulation spend.</p>
+                {r.analysis_embedding_calls.filter((call) => ofWorld(call.world_id)).map((call, index) => <p key={index} className="sub">
+                  {call.category === "objection" ? "Objections" : "Reasons to buy"} · {call.attempt === "retry" ? "fresh retry" : "initial request"}: {call.costs.length ? call.costs.map((cost) => `${cost.cost} USD (${cost.route})`).join(", ") : "no reported bill"}
+                  {call.failure_kind && <> · {call.failure_kind}{call.provider_attempts != null && ` after ${call.provider_attempts} provider attempts`}</>}
+                </p>)}
+              </MethodRow>}
               <MethodRow icon="code" label="Prompt templates"><span className="mono sub">{r.method.template_hashes.map((t) => `${t.name} ${t.hash.slice(0, 8)}`).join(" · ")}</span></MethodRow>
               <MethodRow icon="survey" label="Anchor sets"><span className="mono sub">{r.method.anchor_set_hashes.map((t) => `${t.name} ${t.hash.slice(0, 8)}`).join(" · ")}</span></MethodRow>
               <MethodRow icon="target" label="Validation"><span className="sub">{r.validation}</span></MethodRow>

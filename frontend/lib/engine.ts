@@ -304,6 +304,14 @@ export interface ClusteringExclusion {
   reason_code: string;
   reason: string;
 }
+export interface AnalysisEmbeddingCall {
+  world_id: string;
+  category: "objection" | "reason";
+  attempt: "initial" | "retry";
+  failure_kind?: string | null;
+  provider_attempts?: number | null;
+  costs: { cost: number; model_id: string; served_model_id?: string | null; route: string }[];
+}
 export interface StudyReport {
   contract_version: string;
   run_id: string;
@@ -316,6 +324,7 @@ export interface StudyReport {
   reason_clusters?: ObjectionCluster[];
   clustering_coverage?: ClusteringCoverage[] | null;
   clustering_exclusions?: ClusteringExclusion[];
+  analysis_embedding_calls?: AnalysisEmbeddingCall[];
   digests: OutcomeDigest[];
   assumptions: Assumption[];
   method: MethodDisclosure;
