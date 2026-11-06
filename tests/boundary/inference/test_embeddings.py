@@ -236,3 +236,29 @@ def test_the_feeds_ranking_model_embeds_under_its_own_pin_and_its_own_dimension(
         unpinned.embed(["a post"], role=InferenceRole.RECSYS_EMBED)
     with pytest.raises(ValueError, match="never falls back"):
         ModelPins.model_validate({**pins.model_dump(mode="json"), "fallbacks": {"recsys_embed": "openai/other"}})
+
+
+def test_cache_bypass_fetches_fresh_vectors_without_disabling_other_cache_reads(tmp_path):
+    recorder = Recorder(embed_reply(cost=0.01))
+    client, _ = client_for(recorder, cache_dir=tmp_path)
+    client.embed(["one"])
+    client.embed(["one"], bypass_cache=True)
+    cached = client.embed(["one"])
+    assert len(recorder.bodies) == 2
+    assert cached.costs[0].route is InferenceRoute.CACHE
+    assert client.stats.cache_hits == 1
+    assert {body["model"] for body in recorder.bodies} == {EMBED}
+
+
+def test_a_zero_containing_batch_is_not_admitted_to_cache(tmp_path):
+    def zeros(request):
+        payload = embed_reply()(request).json()
+        payload["data"][0]["embedding"] = [0.0] * 4
+        return httpx.Response(200, json=payload)
+
+    recorder = Recorder(zeros)
+    client, _ = client_for(recorder, cache_dir=tmp_path)
+    client.embed(["one", "two"])
+    client.embed(["one", "two"])
+    assert len(recorder.bodies) == 2
+    assert list(tmp_path.rglob("*.json")) == []

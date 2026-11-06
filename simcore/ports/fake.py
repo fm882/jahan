@@ -137,7 +137,7 @@ class FakeEmbed:
         self.model_id = model_id
         self._dim = dim
 
-    def embed(self, texts: Sequence[str], *, role=None):
+    def embed(self, texts: Sequence[str], *, role=None, bypass_cache: bool = False):
         from simcore.schemas import CostRecorded, InferenceRole, InferenceRoute
 
         from .embed import EmbedResult
