@@ -20,7 +20,7 @@ from .base import (
     canonical_hash,
     proportions_sum_to_one,
 )
-from .enums import ActionKind, AnomalyKind, BeliefDim, Channel, Confidence, DegradationRung, FindingKind, TickUnit, TrustLevel
+from .enums import ActionKind, AnomalyKind, BeliefDim, Channel, Confidence, DegradationRung, FailureKind, FindingKind, TickUnit, TrustLevel
 from .run import PinnedModelId, RunConfig, WorldId
 from .sim import PMF5
 from .trace import CostRecorded, EventId
@@ -159,6 +159,8 @@ class AnalysisEmbeddingCall(SimBaseModel):
     attempt: Literal["initial", "retry"]
     costs: tuple[CostRecorded, ...] = ()
     failure_code: Literal["invalid_embedding", "provider_unavailable"] | None = None
+    failure_kind: FailureKind | None = None
+    provider_attempts: NonNegativeInt | None = None
 
 
 class ClusteringExclusion(SimBaseModel):

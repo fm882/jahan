@@ -42,11 +42,32 @@ def objecting_study(monkeypatch):
 
 def real_analysis_client(handles, handler, **settings):
     time = FakeTime()
+    settings.setdefault("embeddings_batch_size", 1000)
     return InferenceClient(
         handles.config.pins,
-        ExecutionSettings(base_url="http://gateway.test/v1", embeddings_batch_size=1000, **settings),
+        ExecutionSettings(base_url="http://gateway.test/v1", **settings),
         transport=httpx.MockTransport(handler), clock=time.clock, sleep=time.sleep,
     )
+
+
+@pytest.fixture
+def mixed_study(monkeypatch, objecting_study):
+    prepare = _concepts.prepare_study
+
+    def preparing(**kwargs):
+        handles = prepare(**kwargs)
+        original = handles.chat._responder
+
+        def responder(messages, template):
+            payload = json.loads(original(messages, template))
+            if "verbatim" in payload and int(payload["verbatim"].rsplit(" ", 1)[-1]) % 2 == 0:
+                payload["belief_deltas"] = {"dimensions": {"value": 0.15}}
+            return json.dumps(payload)
+
+        handles.chat._responder = responder
+        return handles
+
+    monkeypatch.setattr(_concepts, "prepare_study", preparing)
 
 
 def test_zero_embedding_gets_one_fresh_retry_and_saved_report(tmp_path, monkeypatch):
@@ -260,3 +281,99 @@ def test_malformed_provider_data_reaches_recovered_or_disclosed_report(
         assert "could not be grouped" in (root / "report.md").read_text()
         # No invalid batch may populate the persistent embedding cache.
         assert list((tmp_path / "cache").rglob("*.json")) == []
+
+
+@pytest.mark.parametrize("during_retry", [False, True])
+def test_provider_outage_finishes_report_without_an_outer_retry(
+    tmp_path, monkeypatch, mixed_study, during_retry,
+):
+    import hashlib
+
+    analyze = _concepts.analyze_study
+    observed = {}
+
+    def analyzing(handles, result):
+        world = result.outcomes[0].world_id
+        partition = next((handles.run_dir / "trace").rglob("partition.json"))
+        before = hashlib.sha256(partition.read_bytes()).hexdigest()
+        records = objection_records(handles.store.view(handles.run_id, world))
+        objections = {record.text for record in records}
+        requests = []
+
+        def handler(request):
+            body = json.loads(request.content)
+            texts = body["input"]
+            requests.append(texts)
+            if texts[0] in objections and (not during_retry or len(requests) > 1):
+                return httpx.Response(503, json={"model": body["model"], "usage": {"prompt_tokens": 2, "cost": 0.005}})
+            rows = [[1.0, 0.0] for _ in texts]
+            if during_retry and len(requests) == 1:
+                rows[0] = [0.0, 0.0]
+            return httpx.Response(200, json={
+                "model": body["model"], "usage": {"prompt_tokens": 2, "cost": 0.01},
+                "data": [{"index": i, "embedding": row} for i, row in enumerate(rows)],
+            })
+
+        handles.embed = real_analysis_client(handles, handler, max_retries=2)
+        actual = analyze(handles, result)
+        assert hashlib.sha256(partition.read_bytes()).hexdigest() == before
+        observed.update(requests=requests, objections=len(objections))
+        return actual
+
+    monkeypatch.setattr(_concepts, "analyze_study", analyzing)
+    run_id = "run-" + "0" * 24 + "94"
+    code, output = run_command(*fake_args(tmp_path / "runs", run_id, channels="forum"))
+    assert code == 0, output
+    root = tmp_path / "runs" / run_id
+    report = json.loads((root / "report.json").read_text())
+    assert len(observed["requests"]) == (5 if during_retry else 4)
+    exclusions = report["clustering_exclusions"]
+    assert len(exclusions) == (1 if during_retry else observed["objections"])
+    assert {item["category"] for item in exclusions} == {"objection"}
+    assert {item["reason_code"] for item in exclusions} == {"provider_unavailable"}
+    assert report["reason_clusters"]  # the other category is still analyzed
+    assert bool(report["objection_clusters"]) is during_retry
+    calls = report["analysis_embedding_calls"]
+    failures = [call for call in calls if call["failure_code"] == "provider_unavailable"]
+    assert len(failures) == 1
+    assert failures[0]["provider_attempts"] == 3
+    assert failures[0]["failure_kind"] == "fatal_response"
+    total = sum(cost["cost"] for call in calls for cost in call["costs"])
+    assert total == pytest.approx(0.035 if during_retry else 0.025)
+    assert "service was unavailable" in (root / "report.md").read_text()
+
+
+def test_outage_retains_successful_sibling_bills_without_guessing_vectors(
+    tmp_path, monkeypatch, objecting_study,
+):
+    analyze = _concepts.analyze_study
+    observed = {}
+
+    def analyzing(handles, result):
+        records = objection_records(handles.store.view(handles.run_id, result.outcomes[0].world_id))
+        observed["count"] = len(records)
+        target = records[0].text
+
+        def handler(request):
+            body = json.loads(request.content)
+            if body["input"] == [target]:
+                return httpx.Response(503, json={"model": body["model"], "usage": {"prompt_tokens": 1, "cost": 0.005}})
+            return httpx.Response(200, json={
+                "model": body["model"], "usage": {"prompt_tokens": 1, "cost": 0.01},
+                "data": [{"index": 0, "embedding": [1.0, 0.0]}],
+            })
+
+        handles.embed = real_analysis_client(handles, handler, embeddings_batch_size=1, max_retries=2)
+        return analyze(handles, result)
+
+    monkeypatch.setattr(_concepts, "analyze_study", analyzing)
+    run_id = "run-" + "0" * 24 + "95"
+    code, output = run_command(*fake_args(tmp_path / "runs", run_id, channels="forum"))
+    assert code == 0, output
+    report = json.loads((tmp_path / "runs" / run_id / "report.json").read_text())
+    assert len(report["clustering_exclusions"]) == observed["count"]
+    assert not report["objection_clusters"]
+    assert len(report["analysis_embedding_calls"]) == 1
+    costs = report["analysis_embedding_calls"][0]["costs"]
+    assert len(costs) == observed["count"] + 2
+    assert sum(cost["cost"] for cost in costs) == pytest.approx((observed["count"] - 1) * 0.01 + 0.015)

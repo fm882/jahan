@@ -24,6 +24,9 @@ from simcore.schemas import (AnalysisEmbeddingCall, ClusteringCoverage, Clusteri
 _RELATIVE_QUANTILE = 0.75
 # Actions that say no outright; anything else counts as an objection only through what the turn measured.
 _REFUSING = frozenset({"reject", "complain", "downvote"})
+_PROVIDER_UNAVAILABLE = frozenset({FailureKind.RATE_LIMITED, FailureKind.TIMED_OUT,
+                                    FailureKind.FATAL_RESPONSE, FailureKind.CIRCUIT_OPEN,
+                                    FailureKind.EXCEEDS_RATE_LIMIT})
 
 
 @dataclass
@@ -144,6 +147,7 @@ def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: fl
             "zero_vector": "The embedding remained zero after one fresh retry.",
             "non_finite": "The embedding remained non-finite after one fresh retry.",
             "invalid_embedding": "The embedding response remained unusable after one fresh retry.",
+            "provider_unavailable": "The embedding service was unavailable after its configured retries.",
         }
         diagnostics.exclusions.extend(ClusteringExclusion(
             world_id=world_id, category=category, text=record.text, trace_id=record.event_id,
@@ -207,24 +211,30 @@ def _prepare_embeddings(embed, texts: Sequence[str], *, embedding_calls=None, wo
                          category="objection") -> tuple[np.ndarray, list[str | None]]:
     def request(texts, *, retry=False, dimension=None):
         failure_code = None
+        failure_kind = None
+        provider_attempts = None
         try:
             result = embed.embed(texts, bypass_cache=True) if retry else embed.embed(texts)
             costs = result.costs
         except InvalidEmbeddingData as error:
             result, costs = error.result, error.costs
             failure_code = "invalid_embedding"
+            failure_kind = FailureKind.INVALID_OUTPUT
         except EmbeddingFailure as error:
-            if error.failure.kind is not FailureKind.INVALID_OUTPUT:
+            if error.failure.kind is not FailureKind.INVALID_OUTPUT and error.failure.kind not in _PROVIDER_UNAVAILABLE:
                 raise
             result, costs = None, error.failure.costs
-            failure_code = "invalid_embedding"
+            failure_kind = error.failure.kind
+            provider_attempts = error.failure.attempts
+            failure_code = "invalid_embedding" if failure_kind is FailureKind.INVALID_OUTPUT else "provider_unavailable"
         if embedding_calls is not None:
             embedding_calls.append(AnalysisEmbeddingCall(
                 world_id=world_id, category=category, attempt="retry" if retry else "initial",
-                costs=costs, failure_code=failure_code,
+                costs=costs, failure_code=failure_code, failure_kind=failure_kind,
+                provider_attempts=provider_attempts,
             ))
         if result is None:
-            return None, ["invalid_embedding"] * len(texts)
+            return None, [failure_code or "invalid_embedding"] * len(texts)
         if result.model_id != embed.model_id:
             raise ValueError("clustering embedding result does not match the pinned model")
         try:
@@ -234,7 +244,7 @@ def _prepare_embeddings(embed, texts: Sequence[str], *, embedding_calls=None, wo
         return normalise_embeddings(array)
 
     vectors, reasons = request(texts)
-    invalid = [index for index, reason in enumerate(reasons) if reason is not None]
+    invalid = [index for index, reason in enumerate(reasons) if reason not in (None, "provider_unavailable")]
     if len(invalid):
         replacement, retry_reasons = request([texts[index] for index in invalid], retry=True,
                                              dimension=vectors.shape[1] if vectors is not None else None)
