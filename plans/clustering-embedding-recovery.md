@@ -2,7 +2,7 @@
 
 > Source PRD: [Recover reports from invalid clustering embeddings](../docs/prd/clustering-embedding-recovery.md)
 >
-> Six-slice breakdown approved 2026-11-06. Implementation in progress; live recovery has not started. Check acceptance boxes only after verification.
+> Six-slice breakdown approved 2026-11-06. All six phases implemented and verified. The recovered report discloses unavailable clustering. Check acceptance boxes only after verification.
 
 ## Architectural decisions
 
@@ -312,24 +312,44 @@ or decision needed. Do not choose a different run or bypass a safety guard.
 
 ### Acceptance criteria
 
-- [ ] The intended run is identified from saved metadata and incident context;
+- [x] The intended run is identified from saved metadata and incident context;
       population size alone is not used to select it.
-- [ ] Original launch/configuration, model pins, population, seeds, world states,
+- [x] Original launch/configuration, model pins, population, seeds, world states,
       saved tick boundaries and recorded spend are inspected before recovery.
-- [ ] Original artifacts are preserved and finalized trace identities recorded
+- [x] Original artifacts are preserved and finalized trace identities recorded
       before regeneration. Credentials remain outside documentation and logs.
-- [ ] Recovery uses the original run ID and matching inputs with no automatic
+- [x] Recovery uses the original run ID and matching inputs with no automatic
       force. Any unfinished ticks and potential additional inference are
       disclosed based on the inspected run state.
-- [ ] Completed turns are reused; finalized trace identities and event counts
+- [x] Completed turns are reused; finalized trace identities and event counts
       remain unchanged after recovery.
-- [ ] New report, digest, trace-summary and result artifacts exist before final
+- [x] New report, digest, trace-summary and result artifacts exist before final
       completion is published, and the report is readable through the existing
       interface.
-- [ ] Any partial or unavailable clustering has visible coverage, original
+- [x] Any partial or unavailable clustering has visible coverage, original
       responses, trace IDs and reasons. Fully recovered clustering has no
       fabricated exclusion notice.
-- [ ] Handoff records the run ID, recovery outcome, evidence checks, additional
+- [x] Handoff records the run ID, recovery outcome, evidence checks, additional
       calls/spend available from accounting, and any remaining limitations.
       Missing inputs or failed recovery remain unchecked and explicitly blocked,
       rather than described as completed work.
+
+
+Phase 6 evidence: `run-7dted5842p12x93kkrv5trk04d` was identified by its
+50-persona launch metadata and exact clustering traceback. Original artifacts
+were backed up and verified before recovery. Saved population/graph identities,
+brief/ontology, template and anchor pins passed checks; no force was used. The
+existing resume operation reused the finalized four-tick world without any
+inference, and analysis/report operations then generated all missing artifacts.
+The original 1,870 events and 300 turns remain unchanged; persona chat calls were
+forbidden and none occurred. The run API now returns completed with no launch
+error, and report JSON/Markdown routes were verified.
+
+Fresh retries still returned zero vectors, so all 51 objections and 54 reasons
+to buy are explicitly unclustered with original text and trace IDs. Four analysis
+invocations produced eight billing records, all with unreported prices. Unknown
+costs remain unknown in JSON, Markdown and UI. Saved reports were re-rendered
+without additional inference after correcting the unreported-cost display.
+Final focused Python checks: 90 passed. Frontend checks: 48 tests passed and types
+passed. Full recovery details and baseline failures are recorded in the
+[verification](../docs/evaluations/clustering-embedding-recovery/README.md).

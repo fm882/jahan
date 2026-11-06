@@ -1,7 +1,8 @@
 # PRD — Recover reports from invalid clustering embeddings
 
-Status: proposed, based on the agreed design interview. No implementation or
-recovery has been performed. Written 2026-11-06.
+Status: implemented and verified on the implementation branch, 2026-11-06.
+See the [plan](../../plans/clustering-embedding-recovery.md) and
+[verification](../evaluations/clustering-embedding-recovery/README.md).
 
 ## Problem Statement
 
@@ -242,10 +243,10 @@ The agreed design interview settled retry-once behavior, cache bypass, explicit
 unclustered responses and all-invalid notices, report-only degradation, handling
 expected provider outages, and recovery of the original run after verification.
 
-Current source inspection confirms that completed worlds are skipped on resume
-and that reports are assembled after simulation. Exact recoverability depends on
-the intended run's saved artifacts and matching inputs; those remain unverified.
+Completed worlds were verified to be skipped on resume, and the original
+50-persona run was recovered using matching saved inputs. Its report explicitly
+retains 51 objections and 54 reasons to buy as unclustered because fresh provider
+retries still returned zero vectors. All 300 recorded turns were preserved.
 
-The major modules and test scope above are proposed for review with this PRD;
-implementation has not started. The document is a local draft and has not been
-published as a GitHub issue.
+The modules and test scope above were implemented through the approved six-phase
+plan. The document remains local and has not been published as a GitHub issue.
