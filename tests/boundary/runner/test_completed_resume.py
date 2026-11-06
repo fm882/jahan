@@ -5,6 +5,8 @@ and crashes against a record that is finalized and read-only, so completed cells
 skipped where their last closed tick is read.
 """
 
+import pytest
+
 from simcore.runner import run
 from simcore.schemas import BriefPack, EventFilter, Population, RunConfig, canonical_hash
 from simcore.trace import TraceStore, UnknownWorldError
@@ -113,3 +115,40 @@ def test_a_run_is_not_completed_while_a_later_world_is_still_running(tmp_path):
     assert {status for _, status in seen} == {"running"}
     assert result.status.value == "completed"
     assert store.registry.entry(run_id).status.value == "completed"
+
+
+def test_resume_of_mixed_worlds_skips_finished_world_and_saved_ticks(tmp_path):
+    pack, population = _pack(), _population()
+    config = _config(population, pack, seeds=(4021, 917731))
+    store = _ResumableStore(tmp_path, config.run_id)
+    started = []
+
+    def factory(header):
+        started.append(header.world_id)
+        store.create_world(config.run_id, header)
+        return FakeWorld(header)
+
+    def interrupt(world_id, tick, spent):
+        if len(started) == 2 and tick == 0:
+            raise RuntimeError("interrupt after a saved tick in the second world")
+
+    with pytest.raises(RuntimeError, match="interrupt after"):
+        run(config, pack=pack, population=population, trace=store, registry=store.registry,
+            world_factory=factory, agent_fn=_agent, progress=interrupt)
+    first, second = started
+    assert store.is_finalized(config.run_id, first)
+    before = tuple(store.events_for(first))
+    partial = tuple(store.events_for(second))
+    started.clear()
+    ticks = []
+
+    def agent(jobs):
+        ticks.extend(job.presentation.impression.tick for job in jobs)
+        return _agent(jobs)
+
+    resumed = run(config, pack=pack, population=population, trace=store, registry=store.registry,
+                  world_factory=factory, agent_fn=agent)
+    assert resumed.status.value == "completed"
+    assert started == [second] and ticks and min(ticks) == 1
+    assert tuple(store.events_for(first)) == before
+    assert tuple(store.events_for(second))[:len(partial)] == partial

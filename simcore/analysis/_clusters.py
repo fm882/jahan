@@ -1,17 +1,22 @@
 """Objection clusters: what personas objected to, grouped deterministically.
 
-Objections are chosen from what each turn recorded, embedded once through the run's pinned embedding model,
+Objections are chosen from what each turn recorded and embedded through the run's pinned embedding model,
 and grouped by average-linkage cosine similarity at a recorded threshold, with ties broken from a derived seed. Each
 cluster is labelled by its medoid — the verbatim nearest the centre, quoted as written.
-No k-means, no generated summaries. Two runs over one trace produce one answer.
+Valid vectors are embedded once; invalid rows receive one fresh retry and explicit exclusions if needed.
+Grouping is deterministic for fixed vectors; fresh provider replies can change recovered groups.
 """
 
 import hashlib
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from simcore.schemas import ObjectionCluster, VerbatimGrouping, VerbatimRecord
+from simcore.inference import EmbeddingFailure
+from simcore.ports.embed import InvalidEmbeddingData, embedding_array, normalise_embeddings
+from simcore.schemas import (AnalysisEmbeddingCall, ClusteringCoverage, ClusteringExclusion,
+                             FailureKind, ObjectionCluster, VerbatimGrouping, VerbatimRecord)
 
 
 # The share of the run's own objection pairs a group must be as similar as, when no threshold is given: groups join
@@ -20,18 +25,32 @@ from simcore.schemas import ObjectionCluster, VerbatimGrouping, VerbatimRecord
 _RELATIVE_QUANTILE = 0.75
 # Actions that say no outright; anything else counts as an objection only through what the turn measured.
 _REFUSING = frozenset({"reject", "complain", "downvote"})
+_PROVIDER_UNAVAILABLE = frozenset({FailureKind.RATE_LIMITED, FailureKind.TIMED_OUT,
+                                    FailureKind.FATAL_RESPONSE, FailureKind.CIRCUIT_OPEN,
+                                    FailureKind.EXCEEDS_RATE_LIMIT})
+
+
+@dataclass
+class ClusteringDiagnostics:
+    """Operation-owned disclosures collected while clustering each world/category."""
+
+    coverage: list[ClusteringCoverage] = field(default_factory=list)
+    exclusions: list[ClusteringExclusion] = field(default_factory=list)
 
 
 def cluster_objections(view, *, embed, threshold: float | None = None, seed: int = 0,
                        pinned_embed_model: str | None = None,
-                       world_id: str | None = None) -> tuple[ObjectionCluster, ...]:
+                       world_id: str | None = None,
+                       embedding_calls: list[AnalysisEmbeddingCall] | None = None,
+                       diagnostics: ClusteringDiagnostics | None = None) -> tuple[ObjectionCluster, ...]:
     """Group one world's objections — and only its objections — by embedding similarity.
 
     `objection_records` chooses what counts as an objection from what each turn recorded; `cluster_verbatims`
     groups them. With no `threshold`, the cut is relative to this run's own similarities and recorded on every
     cluster, so a cluster always says the threshold it was grouped at."""
     return cluster_verbatims(objection_records(view), embed=embed, threshold=threshold, seed=seed,
-                             pinned_embed_model=pinned_embed_model, world_id=world_id)
+                             pinned_embed_model=pinned_embed_model, world_id=world_id,
+                             embedding_calls=embedding_calls, diagnostics=diagnostics)
 
 
 def objection_records(view) -> list[VerbatimRecord]:
@@ -62,10 +81,13 @@ _ENDORSING = frozenset({"buy", "like", "upvote", "repost"})
 
 def cluster_reasons(view, *, embed, threshold: float | None = None, seed: int = 0,
                     pinned_embed_model: str | None = None,
-                    world_id: str | None = None) -> tuple[ObjectionCluster, ...]:
+                    world_id: str | None = None,
+                    embedding_calls: list[AnalysisEmbeddingCall] | None = None,
+                    diagnostics: ClusteringDiagnostics | None = None) -> tuple[ObjectionCluster, ...]:
     """Group one world's reasons to buy — the counterpart of its objections — the same way (ADR 0053)."""
     return cluster_verbatims(reason_records(view), embed=embed, threshold=threshold, seed=seed,
-                             pinned_embed_model=pinned_embed_model, world_id=world_id)
+                             pinned_embed_model=pinned_embed_model, world_id=world_id,
+                             embedding_calls=embedding_calls, category="reason", diagnostics=diagnostics)
 
 
 def reason_records(view) -> list[VerbatimRecord]:
@@ -93,10 +115,13 @@ def reason_records(view) -> list[VerbatimRecord]:
 
 def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: float | None = None, seed: int = 0,
                       pinned_embed_model: str | None = None,
-                      world_id: str | None = None) -> tuple[ObjectionCluster, ...]:
+                      world_id: str | None = None,
+                      embedding_calls: list[AnalysisEmbeddingCall] | None = None,
+                      category: str = "objection",
+                      diagnostics: ClusteringDiagnostics | None = None) -> tuple[ObjectionCluster, ...]:
     """Group verbatims by average-linkage cosine similarity: two groups join while their members are, on average,
     at least `threshold` alike. Average linkage does not chain the way single linkage does — one bridging sentence
-    cannot pull two topics into one group. `embed` is called exactly once, in deterministic order. When the run's
+    cannot pull two topics into one group. Valid inputs are embedded once; invalid rows get one fresh retry. When the run's
     pin is given, any other embedding model is refused: a digest cannot be computed in a different embedding space
     from the study it describes."""
     if threshold is not None and not 0.0 <= threshold <= 1.0:
@@ -107,9 +132,36 @@ def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: fl
             f"but clustering was asked through {embed.model_id}"
         )
     records = sorted(records, key=lambda record: record.event_id)
+    eligible = len(records)
+    if not records:
+        if diagnostics is not None:
+            diagnostics.coverage.append(ClusteringCoverage(world_id=world_id, category=category,
+                                                           eligible=0, clustered=0, excluded=0))
+        return ()
+    vectors, reasons = _prepare_embeddings(embed, [record.text for record in records], embedding_calls=embedding_calls,
+                                          world_id=world_id, category=category)
+    invalid = np.array([reason is not None for reason in reasons])
+    if diagnostics is None and invalid.any():
+        raise ValueError("clustering is incomplete; collect diagnostics to retain unclustered responses")
+    if diagnostics is not None:
+        messages = {
+            "zero_vector": "The embedding remained zero after one fresh retry.",
+            "non_finite": "The embedding remained non-finite after one fresh retry.",
+            "invalid_embedding": "The embedding response remained unusable after one fresh retry.",
+            "provider_unavailable": "The embedding service was unavailable after its configured retries.",
+        }
+        diagnostics.exclusions.extend(ClusteringExclusion(
+            world_id=world_id, category=category, text=record.text, trace_id=record.event_id,
+            reason_code=reason, reason=messages[reason],
+        ) for record, reason in zip(records, reasons, strict=True) if reason)
+        diagnostics.coverage.append(ClusteringCoverage(
+            world_id=world_id, category=category, eligible=eligible,
+            clustered=int((~invalid).sum()), excluded=int(invalid.sum()),
+        ))
+    records = [record for record, excluded in zip(records, invalid, strict=True) if not excluded]
+    vectors = vectors[~invalid]
     if not records:
         return ()
-    vectors = _embed_once(embed, [record.text for record in records])
     cut = threshold if threshold is not None else _relative_threshold(vectors)
     clusters = []
     for members in _ordered_components(_average_linkage(vectors, cut), records):
@@ -156,14 +208,61 @@ def _ordered_verbatims(view) -> list[VerbatimRecord]:
     return sorted(records, key=lambda record: record.event_id)
 
 
-def _embed_once(embed, texts: Sequence[str]) -> np.ndarray:
-    result = embed.embed(texts)
-    vectors = np.asarray(result.vectors, dtype=np.float64)
-    if vectors.shape[0] != len(texts):
-        raise ValueError(f"embedding returned {vectors.shape[0]} vectors for {len(texts)} verbatims")
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
-    return vectors / norms
+def _prepare_embeddings(embed, texts: Sequence[str], *, embedding_calls=None, world_id=None,
+                         category="objection") -> tuple[np.ndarray, list[str | None]]:
+    def request(texts, *, retry=False, dimension=None):
+        failure_code = None
+        failure_kind = None
+        provider_attempts = None
+        try:
+            result = embed.embed(texts, bypass_cache=True) if retry else embed.embed(texts)
+            costs = result.costs
+        except InvalidEmbeddingData as error:
+            result, costs = error.result, error.costs
+            failure_code = "invalid_embedding"
+            failure_kind = FailureKind.INVALID_OUTPUT
+        except EmbeddingFailure as error:
+            if error.failure.kind is not FailureKind.INVALID_OUTPUT and error.failure.kind not in _PROVIDER_UNAVAILABLE:
+                raise
+            result, costs = None, error.failure.costs
+            failure_kind = error.failure.kind
+            provider_attempts = error.failure.attempts
+            failure_code = "invalid_embedding" if failure_kind is FailureKind.INVALID_OUTPUT else "provider_unavailable"
+        if result is None:
+            vectors, reasons = None, [failure_code or "invalid_embedding"] * len(texts)
+        else:
+            if result.model_id != embed.model_id:
+                raise ValueError("clustering embedding result does not match the pinned model")
+            try:
+                array = embedding_array(result.vectors, len(texts), dimension=dimension or result.dim)
+            except InvalidEmbeddingData:
+                vectors, reasons = None, ["invalid_embedding"] * len(texts)
+            else:
+                vectors, reasons = normalise_embeddings(array)
+        if any(reasons) and failure_code is None:
+            failure_code, failure_kind = "invalid_embedding", FailureKind.INVALID_OUTPUT
+        if embedding_calls is not None:
+            embedding_calls.append(AnalysisEmbeddingCall(
+                world_id=world_id, category=category, attempt="retry" if retry else "initial",
+                costs=costs, failure_code=failure_code, failure_kind=failure_kind,
+                provider_attempts=provider_attempts,
+            ))
+        return vectors, reasons
+
+    vectors, reasons = request(texts)
+    invalid = [index for index, reason in enumerate(reasons) if reason not in (None, "provider_unavailable")]
+    if len(invalid):
+        replacement, retry_reasons = request([texts[index] for index in invalid], retry=True,
+                                             dimension=vectors.shape[1] if vectors is not None else None)
+        if vectors is None:
+            vectors = replacement
+        elif replacement is not None:
+            vectors[invalid] = replacement
+        for index, reason in zip(invalid, retry_reasons, strict=True):
+            reasons[index] = reason
+    if vectors is None:
+        vectors = np.zeros((len(texts), 0))
+    return vectors, reasons
 
 
 def _ordered_components(components: list[list[int]], records: list[VerbatimRecord]) -> list[list[int]]:
