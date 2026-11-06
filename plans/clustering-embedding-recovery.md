@@ -2,8 +2,7 @@
 
 > Source PRD: [Recover reports from invalid clustering embeddings](../docs/prd/clustering-embedding-recovery.md)
 >
-> Six-slice breakdown approved 2026-11-06. Planning only; implementation and
-> recovery have not started. Check acceptance boxes only after verification.
+> Six-slice breakdown approved 2026-11-06. Implementation in progress; live recovery has not started. Check acceptance boxes only after verification.
 
 ## Architectural decisions
 
@@ -75,23 +74,29 @@ visible failure until Phase 2 adds the complete exclusion path.
 
 ### Acceptance criteria
 
-- [ ] A deterministic provider fixture reproduces the reported SciPy error on
+- [x] A deterministic provider fixture reproduces the reported SciPy error on
       the existing behavior, then the same study fixture produces a valid report
       after receiving a valid retry vector.
-- [ ] Valid rows are retained; only the identifiable zero rows are retried, in
+- [x] Valid rows are retained; only the identifiable zero rows are retried, in
       stable input order, without shifting any response's trace identity.
-- [ ] The retry reaches the provider despite an existing cache entry, uses the
+- [x] The retry reaches the provider despite an existing cache entry, uses the
       same pinned model and makes no global cache-setting changes.
-- [ ] The initial zero-containing batch is not cached as valid; the valid retry
+- [x] The initial zero-containing batch is not cached as valid; the valid retry
       may be cached under its own complete request identity.
-- [ ] One application retry obeys existing rate limits and network retry bounds.
+- [x] One application retry obeys existing rate limits and network retry bounds.
       Both initial and recovery physical-call costs remain inspectable once.
-- [ ] The generated structured and Markdown reports and the existing report UI
+- [x] The generated structured and Markdown reports and the existing report UI
       show the recovered clusters and resolve their original trace evidence.
-- [ ] An all-valid fixture retains its previous cluster membership, labels,
+- [x] An all-valid fixture retains its previous cluster membership, labels,
       thresholds, findings and inference-call count.
 
 ---
+
+Phase 1 evidence: 74 focused tests passed, including a completed study with a
+real inference client and mocked HTTP provider. The provider returned a zero row
+and then a fresh valid row despite a warmed singleton cache entry. The resulting
+clusters matched a valid-input reanalysis; JSON/Markdown and existing report HTTP
+routes retained the recovered evidence and separate analysis-call costs.
 
 ## Phase 2: Finish reports with explicit unclustered responses
 
