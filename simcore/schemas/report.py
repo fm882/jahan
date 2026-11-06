@@ -531,6 +531,9 @@ class Report(SimBaseModel):
         keys = [(item.world_id, item.category) for item in self.clustering_coverage]
         if len(keys) != len(set(keys)):
             raise ValueError("clustering coverage repeats a world/category")
+        expected = {(world, category) for world in digested for category in ("objection", "reason")}
+        if set(keys) != expected:
+            raise ValueError("clustering coverage must describe both categories of every digested world")
         for item in self.clustering_coverage:
             if item.world_id not in digested:
                 raise ValueError("clustering coverage names an undigested world")
@@ -545,6 +548,9 @@ class Report(SimBaseModel):
                 raise ValueError("clustering coverage must assign every response exactly once")
         if any((record.world_id, record.category) not in keys for record in self.clustering_exclusions):
             raise ValueError("clustering exclusion has no coverage entry")
+        for category, clusters in (("objection", self.objection_clusters), ("reason", self.reason_clusters)):
+            if any((cluster.world_id, category) not in keys for cluster in clusters):
+                raise ValueError("cluster has no coverage entry")
         return self
 
     @model_validator(mode="after")

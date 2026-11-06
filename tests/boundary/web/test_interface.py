@@ -397,6 +397,43 @@ def _visible(html: str) -> str:
 
 
 @needs_a_browser
+def test_report_discloses_unavailable_clustering_and_reads_legacy_coverage(stack):
+    root = stack["runs"] / stack["finished"]
+    path = root / "report.json"
+    original = path.read_text()
+    report = json.loads(original)
+    world = report["digests"][0]["world_id"]
+    from simcore.schemas import EventFilter
+    from simcore.trace import TraceStore
+
+    events = TraceStore(root / "trace").view(stack["finished"], world).events(EventFilter(kinds=("turn",)))
+    event = next(item for item in events if item.payload.turn.reaction.verbatim)
+    report["objection_clusters"] = []
+    report["clustering_coverage"] = [dict(world_id=world, category="objection", eligible=1, clustered=0, excluded=1)]
+    report["clustering_exclusions"] = [dict(
+        world_id=world, category="objection", text=event.payload.turn.reaction.verbatim,
+        trace_id=event.event_id, reason_code="non_finite", reason="The embedding remained non-finite after one fresh retry.",
+    )]
+    try:
+        path.write_text(json.dumps(report))
+        html, log = _render(stack["base"], f"/report?run={stack['finished']}")
+        text = _visible(html)
+        assert "Clustering unavailable. 1 of 1 objections could not be grouped." in text
+        assert "No objections were found" not in text
+        assert event.payload.turn.reaction.verbatim in text
+        assert f"resolve={event.event_id}" in html
+        assert "Application error" not in html and "Uncaught" not in log
+        legacy = json.loads(original)
+        legacy.pop("clustering_coverage", None)
+        legacy.pop("clustering_exclusions", None)
+        path.write_text(json.dumps(legacy))
+        text = _visible(_render(stack["base"], f"/report?run={stack['finished']}")[0])
+        assert "Clustering coverage was not recorded in this report." in text
+    finally:
+        path.write_text(original)
+
+
+@needs_a_browser
 @pytest.mark.parametrize(
     "page",
     ["/", "/intake", "/who", "/calibration", "/run", "/report", "/atlas", "/trace", "/population"],
