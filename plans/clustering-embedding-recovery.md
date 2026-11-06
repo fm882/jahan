@@ -166,27 +166,34 @@ bounded invalid-data recovery policy to that request rather than guessing.
 
 ### Acceptance criteria
 
-- [ ] End-to-end report cases cover NaN, both infinities, empty dimensions,
+- [x] End-to-end report cases cover NaN, both infinities, empty dimensions,
       incorrect row counts, ragged/nonnumeric data and unsafe normalization.
       Each either recovers or produces explicit exclusions without reaching
       SciPy with non-finite distances.
-- [ ] Finite nonzero vectors that can be normalized safely remain usable;
+- [x] Finite nonzero vectors that can be normalized safely remain usable;
       validation does not invent a new arbitrary norm cutoff.
-- [ ] An unusable cached result is treated as a miss, never a successful hit;
+- [x] An unusable cached result is treated as a miss, never a successful hit;
       a valid fresh response yields a complete report and a valid cache entry.
-- [ ] Unusable fresh batches never enter the cache. No successful subset is
+- [x] Unusable fresh batches never enter the cache. No successful subset is
       stored under a key describing a larger request.
-- [ ] Input-to-row mappings remain correct after filtering and retry. If mapping
+- [x] Input-to-row mappings remain correct after filtering and retry. If mapping
       cannot be established, no truncation or positional guess assigns evidence.
-- [ ] The same invalid-provider fixture that yields report exclusions still
+- [x] The same invalid-provider fixture that yields report exclusions still
       fails a simulation embedding caller instead of continuing with partial
       vectors or corrupting persona state.
-- [ ] Pin violations, trace corruption and an injected programming error remain
+- [x] Pin violations, trace corruption and an injected programming error remain
       visible failures rather than report exclusions.
-- [ ] Existing valid-cache reuse and uncached adapter behavior remain correct;
+- [x] Existing valid-cache reuse and uncached adapter behavior remain correct;
       all supported cache-backed adapters honor the recovery bypass.
 
 ---
+
+Phase 3 evidence: 297 inference, analysis, report and pipeline tests passed.
+After tightening wire-format validation, 59 focused cases passed again. Eighteen
+full-study cases cover repeated/recovering zero, NaN, both infinities, empty,
+ragged, wrong-count, nonnumeric and misindexed provider output. Cache poison,
+finite numerical extremes, default strict failures and pin-failure priority over
+bad sibling data have dedicated checks. Programming errors still propagate.
 
 ## Phase 4: Finish reports during provider outages with accurate costs
 
