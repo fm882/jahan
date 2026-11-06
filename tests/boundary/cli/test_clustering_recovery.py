@@ -207,6 +207,7 @@ def test_persistent_invalid_vectors_finish_with_disclosed_evidence(tmp_path, mon
     assert [bypass for _, bypass in observations["requests"]] == [False, True, False, True]
     exclusions = report["clustering_exclusions"]
     assert {item["text"] for item in exclusions} == observations["bad"]
+    assert all(call["failure_code"] == "invalid_embedding" for call in report["analysis_embedding_calls"])
     for item in exclusions:
         assert observations["records"][item["trace_id"]] == item["text"]
         assert item["trace_id"] in markdown and item["text"] in markdown

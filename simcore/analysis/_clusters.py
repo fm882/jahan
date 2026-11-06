@@ -1,9 +1,10 @@
 """Objection clusters: what personas objected to, grouped deterministically.
 
-Objections are chosen from what each turn recorded, embedded once through the run's pinned embedding model,
+Objections are chosen from what each turn recorded and embedded through the run's pinned embedding model,
 and grouped by average-linkage cosine similarity at a recorded threshold, with ties broken from a derived seed. Each
 cluster is labelled by its medoid — the verbatim nearest the centre, quoted as written.
-No k-means, no generated summaries. Two runs over one trace produce one answer.
+Valid vectors are embedded once; invalid rows receive one fresh retry and explicit exclusions if needed.
+Grouping is deterministic for fixed vectors; fresh provider replies can change recovered groups.
 """
 
 import hashlib
@@ -227,21 +228,26 @@ def _prepare_embeddings(embed, texts: Sequence[str], *, embedding_calls=None, wo
             failure_kind = error.failure.kind
             provider_attempts = error.failure.attempts
             failure_code = "invalid_embedding" if failure_kind is FailureKind.INVALID_OUTPUT else "provider_unavailable"
+        if result is None:
+            vectors, reasons = None, [failure_code or "invalid_embedding"] * len(texts)
+        else:
+            if result.model_id != embed.model_id:
+                raise ValueError("clustering embedding result does not match the pinned model")
+            try:
+                array = embedding_array(result.vectors, len(texts), dimension=dimension or result.dim)
+            except InvalidEmbeddingData:
+                vectors, reasons = None, ["invalid_embedding"] * len(texts)
+            else:
+                vectors, reasons = normalise_embeddings(array)
+        if any(reasons) and failure_code is None:
+            failure_code, failure_kind = "invalid_embedding", FailureKind.INVALID_OUTPUT
         if embedding_calls is not None:
             embedding_calls.append(AnalysisEmbeddingCall(
                 world_id=world_id, category=category, attempt="retry" if retry else "initial",
                 costs=costs, failure_code=failure_code, failure_kind=failure_kind,
                 provider_attempts=provider_attempts,
             ))
-        if result is None:
-            return None, [failure_code or "invalid_embedding"] * len(texts)
-        if result.model_id != embed.model_id:
-            raise ValueError("clustering embedding result does not match the pinned model")
-        try:
-            array = embedding_array(result.vectors, len(texts), dimension=dimension or result.dim)
-        except InvalidEmbeddingData:
-            return None, ["invalid_embedding"] * len(texts)
-        return normalise_embeddings(array)
+        return vectors, reasons
 
     vectors, reasons = request(texts)
     invalid = [index for index, reason in enumerate(reasons) if reason not in (None, "provider_unavailable")]
