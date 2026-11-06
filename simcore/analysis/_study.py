@@ -10,7 +10,7 @@ from simcore.schemas import Scenario, canonical_hash
 from simcore.trace.views import snapshot_scope
 
 from ._anomalies import finish_anomalies, prepare_anomalies
-from ._clusters import cluster_objections, cluster_reasons
+from ._clusters import ClusteringDiagnostics, cluster_objections, cluster_reasons
 from ._digest import digest
 from ._findings import findings
 from ._spread import spread
@@ -19,18 +19,21 @@ from ._trace_summary import TraceSummaryBuilder
 
 def _prepare_world(view, *, scenario, seed, population, embed, pinned_embed_model, world_id):
     embedding_calls = []
+    diagnostics = ClusteringDiagnostics()
     outcome = digest(view, scenario=scenario, population=population, seed=seed,
                      pinned_embed_model=pinned_embed_model)
     clusters = cluster_objections(view, embed=embed, pinned_embed_model=pinned_embed_model,
-                                  world_id=world_id, embedding_calls=embedding_calls)
+                                  world_id=world_id, embedding_calls=embedding_calls, diagnostics=diagnostics)
     reasons = cluster_reasons(view, embed=embed, pinned_embed_model=pinned_embed_model,
-                              world_id=world_id, embedding_calls=embedding_calls)
+                              world_id=world_id, embedding_calls=embedding_calls, diagnostics=diagnostics)
     found = findings(view, embed=embed, pinned_embed_model=pinned_embed_model,
                      seed=seed, world_id=world_id, clusters=clusters, digest=outcome)
     return {
         "scenario": scenario, "seed": seed, "digest": outcome, "findings": found,
         "clusters": clusters, "reasons": reasons,
         "embedding_calls": tuple(embedding_calls),
+        "clustering_coverage": tuple(diagnostics.coverage),
+        "clustering_exclusions": tuple(diagnostics.exclusions),
     }, prepare_anomalies(view)
 
 

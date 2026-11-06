@@ -160,6 +160,33 @@ class AnalysisEmbeddingCall(SimBaseModel):
     costs: tuple[CostRecorded, ...] = ()
 
 
+class ClusteringExclusion(SimBaseModel):
+    """Original evidence that could not be grouped; never a semantic cluster."""
+
+    world_id: WorldId | None = None
+    category: Literal["objection", "reason"]
+    text: NonEmptyStr
+    trace_id: EventId
+    reason_code: Literal["zero_vector", "non_finite", "invalid_embedding", "provider_unavailable"]
+    reason: NonEmptyStr
+
+
+class ClusteringCoverage(SimBaseModel):
+    """Response counts for one world's eligible category, not persona counts."""
+
+    world_id: WorldId | None = None
+    category: Literal["objection", "reason"]
+    eligible: NonNegativeInt
+    clustered: NonNegativeInt
+    excluded: NonNegativeInt
+
+    @model_validator(mode="after")
+    def _counts_reconcile(self) -> Self:
+        if self.eligible != self.clustered + self.excluded:
+            raise ValueError("eligible clustering responses must equal clustered plus excluded")
+        return self
+
+
 class ObjectionCluster(SimBaseModel):
     """Verbatims clustered by embedding similarity around one recurring objection; the cited verbatims are
     a sample of the cluster, so the cluster is at least as large as what it cites. The label is the
@@ -486,7 +513,36 @@ class Report(SimBaseModel):
     # What persuaded, grouped exactly as objections are (ADR 0053): a quoted medoid and the verbatims it stands for.
     reason_clusters: tuple[ObjectionCluster, ...] = ()
     analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...] = ()
+    clustering_exclusions: tuple[ClusteringExclusion, ...] = ()
+    # None means an older report did not record coverage, not complete coverage.
+    clustering_coverage: tuple[ClusteringCoverage, ...] | None = None
     digests: tuple[OutcomeDigest, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _clustering_evidence_reconciles(self) -> Self:
+        if self.clustering_coverage is None:
+            if self.clustering_exclusions:
+                raise ValueError("clustering exclusions require coverage")
+            return self
+        digested = {digest.world_id for digest in self.digests}
+        keys = [(item.world_id, item.category) for item in self.clustering_coverage]
+        if len(keys) != len(set(keys)):
+            raise ValueError("clustering coverage repeats a world/category")
+        for item in self.clustering_coverage:
+            if item.world_id not in digested:
+                raise ValueError("clustering coverage names an undigested world")
+            clusters = self.objection_clusters if item.category == "objection" else self.reason_clusters
+            groups = [cluster for cluster in clusters if cluster.world_id == item.world_id]
+            clustered = [trace_id for cluster in groups for trace_id in cluster.verbatim_trace_ids]
+            excluded = [record.trace_id for record in self.clustering_exclusions
+                        if (record.world_id, record.category) == (item.world_id, item.category)]
+            if len(clustered) != item.clustered or sum(cluster.size for cluster in groups) != item.clustered:
+                raise ValueError("clustering coverage differs from clustered evidence")
+            if len(excluded) != item.excluded or len(set(clustered + excluded)) != item.eligible:
+                raise ValueError("clustering coverage must assign every response exactly once")
+        if any((record.world_id, record.category) not in keys for record in self.clustering_exclusions):
+            raise ValueError("clustering exclusion has no coverage entry")
+        return self
 
     @model_validator(mode="after")
     def _digests_describe_this_runs_worlds(self) -> Self:

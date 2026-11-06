@@ -4,14 +4,16 @@ import json
 
 import httpx
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
-from simcore.analysis import cluster_objections, objection_records
+from simcore.analysis import cluster_objections, objection_records, reason_records
 from simcore.cli import _concepts
 from simcore.inference import ExecutionSettings, InferenceClient
 from simcore.web import create_app
 from tests.boundary.cli.support import fake_args, run_command
 from tests.boundary.inference.test_scale import FakeTime
+from simcore.ports.fake import FakeEmbed
 
 
 def test_zero_embedding_gets_one_fresh_retry_and_saved_report(tmp_path, monkeypatch):
@@ -95,3 +97,78 @@ def test_zero_embedding_gets_one_fresh_retry_and_saved_report(tmp_path, monkeypa
     api = TestClient(create_app(runs_dir=tmp_path / "runs"))
     assert api.get(f"/api/runs/{run_id}/report").json() == report
     assert api.get(f"/api/runs/{run_id}/report.md").text == (report_dir / "report.md").read_text()
+
+
+@pytest.mark.parametrize("all_invalid", [False, True])
+def test_persistent_invalid_vectors_finish_with_disclosed_evidence(tmp_path, monkeypatch, all_invalid):
+    prepare, analyze = _concepts.prepare_study, _concepts.analyze_study
+    observations = {}
+
+    def preparing(**kwargs):
+        handles = prepare(**kwargs)
+        original = handles.chat._responder
+        counter = 0
+
+        def mixed(messages, template):
+            nonlocal counter
+            payload = json.loads(original(messages, template))
+            if "verbatim" in payload:
+                counter += 1
+                payload["verbatim"] = f"My response {counter}"
+                payload["belief_deltas"] = {"dimensions": {"value": -0.05 if counter % 2 else 0.15}}
+            return json.dumps(payload)
+
+        handles.chat._responder = mixed
+        return handles
+
+    def analyzing(handles, result):
+        view = handles.store.view(handles.run_id, result.outcomes[0].world_id)
+        categories = [objection_records(view), reason_records(view)]
+        assert all(len(records) > 1 for records in categories)
+        bad = {record.text for records in categories for record in (records if all_invalid else records[:1])}
+
+        class BadEmbed(FakeEmbed):
+            def embed(self, texts, *, bypass_cache=False):
+                observations.setdefault("requests", []).append((tuple(texts), bypass_cache))
+                result = super().embed(texts)
+                for index, text in enumerate(texts):
+                    if text in bad:
+                        result.vectors[index] = 0.0
+                return result
+
+        handles.embed = BadEmbed(model_id=handles.embed_pin)
+        observations["records"] = {record.event_id: record.text for records in categories for record in records}
+        observations["bad"] = bad
+        return analyze(handles, result)
+
+    monkeypatch.setattr(_concepts, "prepare_study", preparing)
+    monkeypatch.setattr(_concepts, "analyze_study", analyzing)
+    run_id = "run-" + "0" * 24 + "92"
+    code, output = run_command(*fake_args(tmp_path / "runs", run_id, channels="forum"))
+    assert code == 0, output
+    root = tmp_path / "runs" / run_id
+    report = json.loads((root / "report.json").read_text())
+    markdown = (root / "report.md").read_text()
+    assert len(observations["requests"]) == 4  # initial + one retry per category; findings never embed again
+    assert [bypass for _, bypass in observations["requests"]] == [False, True, False, True]
+    exclusions = report["clustering_exclusions"]
+    assert {item["text"] for item in exclusions} == observations["bad"]
+    for item in exclusions:
+        assert observations["records"][item["trace_id"]] == item["text"]
+        assert item["trace_id"] in markdown and item["text"] in markdown
+        assert item["reason_code"] == "zero_vector"
+    for coverage in report["clustering_coverage"]:
+        assert coverage["eligible"] == coverage["clustered"] + coverage["excluded"]
+        assert coverage["excluded"] > 0
+    assert report["digests"] and report["findings"]
+    assert (root / "trace-summary.json").exists() and (root / "result.json").exists()
+    if all_invalid:
+        assert not report["objection_clusters"] and not report["reason_clusters"]
+        assert "Clustering unavailable" in markdown
+        assert "No objections were found" not in markdown
+        assert not [finding for finding in report["findings"] if finding["kind"] == "objection"]
+    else:
+        assert report["objection_clusters"] and report["reason_clusters"]
+        for clusters in (report["objection_clusters"], report["reason_clusters"]):
+            assert not {item["trace_id"] for item in exclusions}.intersection(
+                trace_id for cluster in clusters for trace_id in cluster["verbatim_trace_ids"])

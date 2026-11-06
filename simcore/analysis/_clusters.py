@@ -8,10 +8,12 @@ No k-means, no generated summaries. Two runs over one trace produce one answer.
 
 import hashlib
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from simcore.schemas import AnalysisEmbeddingCall, ObjectionCluster, VerbatimGrouping, VerbatimRecord
+from simcore.schemas import (AnalysisEmbeddingCall, ClusteringCoverage, ClusteringExclusion,
+                             ObjectionCluster, VerbatimGrouping, VerbatimRecord)
 
 
 # The share of the run's own objection pairs a group must be as similar as, when no threshold is given: groups join
@@ -22,10 +24,19 @@ _RELATIVE_QUANTILE = 0.75
 _REFUSING = frozenset({"reject", "complain", "downvote"})
 
 
+@dataclass
+class ClusteringDiagnostics:
+    """Operation-owned disclosures collected while clustering each world/category."""
+
+    coverage: list[ClusteringCoverage] = field(default_factory=list)
+    exclusions: list[ClusteringExclusion] = field(default_factory=list)
+
+
 def cluster_objections(view, *, embed, threshold: float | None = None, seed: int = 0,
                        pinned_embed_model: str | None = None,
                        world_id: str | None = None,
-                       embedding_calls: list[AnalysisEmbeddingCall] | None = None) -> tuple[ObjectionCluster, ...]:
+                       embedding_calls: list[AnalysisEmbeddingCall] | None = None,
+                       diagnostics: ClusteringDiagnostics | None = None) -> tuple[ObjectionCluster, ...]:
     """Group one world's objections — and only its objections — by embedding similarity.
 
     `objection_records` chooses what counts as an objection from what each turn recorded; `cluster_verbatims`
@@ -33,7 +44,7 @@ def cluster_objections(view, *, embed, threshold: float | None = None, seed: int
     cluster, so a cluster always says the threshold it was grouped at."""
     return cluster_verbatims(objection_records(view), embed=embed, threshold=threshold, seed=seed,
                              pinned_embed_model=pinned_embed_model, world_id=world_id,
-                             embedding_calls=embedding_calls)
+                             embedding_calls=embedding_calls, diagnostics=diagnostics)
 
 
 def objection_records(view) -> list[VerbatimRecord]:
@@ -65,11 +76,12 @@ _ENDORSING = frozenset({"buy", "like", "upvote", "repost"})
 def cluster_reasons(view, *, embed, threshold: float | None = None, seed: int = 0,
                     pinned_embed_model: str | None = None,
                     world_id: str | None = None,
-                    embedding_calls: list[AnalysisEmbeddingCall] | None = None) -> tuple[ObjectionCluster, ...]:
+                    embedding_calls: list[AnalysisEmbeddingCall] | None = None,
+                    diagnostics: ClusteringDiagnostics | None = None) -> tuple[ObjectionCluster, ...]:
     """Group one world's reasons to buy — the counterpart of its objections — the same way (ADR 0053)."""
     return cluster_verbatims(reason_records(view), embed=embed, threshold=threshold, seed=seed,
                              pinned_embed_model=pinned_embed_model, world_id=world_id,
-                             embedding_calls=embedding_calls, category="reason")
+                             embedding_calls=embedding_calls, category="reason", diagnostics=diagnostics)
 
 
 def reason_records(view) -> list[VerbatimRecord]:
@@ -99,7 +111,8 @@ def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: fl
                       pinned_embed_model: str | None = None,
                       world_id: str | None = None,
                       embedding_calls: list[AnalysisEmbeddingCall] | None = None,
-                      category: str = "objection") -> tuple[ObjectionCluster, ...]:
+                      category: str = "objection",
+                      diagnostics: ClusteringDiagnostics | None = None) -> tuple[ObjectionCluster, ...]:
     """Group verbatims by average-linkage cosine similarity: two groups join while their members are, on average,
     at least `threshold` alike. Average linkage does not chain the way single linkage does — one bridging sentence
     cannot pull two topics into one group. Valid inputs are embedded once; invalid rows get one fresh retry. When the run's
@@ -113,10 +126,30 @@ def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: fl
             f"but clustering was asked through {embed.model_id}"
         )
     records = sorted(records, key=lambda record: record.event_id)
+    eligible = len(records)
     if not records:
+        if diagnostics is not None:
+            diagnostics.coverage.append(ClusteringCoverage(world_id=world_id, category=category,
+                                                           eligible=0, clustered=0, excluded=0))
         return ()
     vectors = _embed_once(embed, [record.text for record in records], embedding_calls=embedding_calls,
                           world_id=world_id, category=category)
+    invalid = ~np.any(vectors != 0.0, axis=1)
+    if diagnostics is None and invalid.any():
+        raise ValueError("clustering is incomplete; collect diagnostics to retain unclustered responses")
+    if diagnostics is not None:
+        diagnostics.exclusions.extend(ClusteringExclusion(
+            world_id=world_id, category=category, text=record.text, trace_id=record.event_id,
+            reason_code="zero_vector", reason="The embedding remained zero after one fresh retry.",
+        ) for record, excluded in zip(records, invalid, strict=True) if excluded)
+        diagnostics.coverage.append(ClusteringCoverage(
+            world_id=world_id, category=category, eligible=eligible,
+            clustered=int((~invalid).sum()), excluded=int(invalid.sum()),
+        ))
+    records = [record for record, excluded in zip(records, invalid, strict=True) if not excluded]
+    vectors = vectors[~invalid]
+    if not records:
+        return ()
     cut = threshold if threshold is not None else _relative_threshold(vectors)
     clusters = []
     for members in _ordered_components(_average_linkage(vectors, cut), records):
@@ -187,8 +220,7 @@ def _embed_once(embed, texts: Sequence[str], *, embedding_calls=None, world_id=N
             raise ValueError("retry embedding shape does not match the submitted verbatims")
         vectors[invalid] = replacement
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        if np.any(norms == 0.0):
-            raise ValueError("clustering embeddings still contain zero vectors after a fresh retry")
+    norms[norms == 0.0] = 1.0
     return vectors / norms
 
 

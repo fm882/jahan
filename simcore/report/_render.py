@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from simcore.brief import assumptions_of
 from simcore.schemas import (
     AnalysisEmbeddingCall,
+    ClusteringCoverage,
+    ClusteringExclusion,
     Finding,
     OutcomeDigest,
     Report,
@@ -156,6 +158,8 @@ class _Document:
     anchor_set_hashes: tuple[tuple[str, str], ...]
     validation: str
     analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...]
+    clustering_exclusions: tuple[ClusteringExclusion, ...]
+    clustering_coverage: tuple[ClusteringCoverage, ...] | None
     scenarios: tuple[_ScenarioSection, ...] = ()
 
 
@@ -271,6 +275,10 @@ def _build(findings: tuple[Finding, ...], digests: tuple[OutcomeDigest, ...], pa
         anchor_set_hashes=tuple(sorted(pack.config.anchor_set_hashes.items())),
         validation=pack.validation.strip(),
         analysis_embedding_calls=pack.analysis_embedding_calls,
+        clustering_exclusions=tuple(sorted(pack.clustering_exclusions,
+                                            key=lambda item: (item.world_id or "", item.category, item.trace_id))),
+        clustering_coverage=None if pack.clustering_coverage is None else tuple(sorted(
+            pack.clustering_coverage, key=lambda item: (item.world_id or "", item.category))),
         scenarios=tuple(
             _ScenarioSection(
                 variant_id=scenario.variant.variant_id,
@@ -302,8 +310,22 @@ def _first_and_last(digest: _DigestSection) -> tuple:
 
 
 def _groups(lines: list[str], clusters: tuple[_ClusterSection, ...], doc: _Document, noun: str) -> None:
+    category = "objection" if noun == "objections" else "reason"
+    coverage = [item for item in doc.clustering_coverage or () if item.category == category]
+    for item in coverage:
+        lines.extend([f"World {item.world_id}: {item.excluded} of {item.eligible} {noun} could not be grouped.", ""])
+        if item.eligible and not item.clustered:
+            lines.extend(["Clustering unavailable for this world/category.", ""])
+    excluded = [item for item in doc.clustering_exclusions if item.category == category]
+    if excluded:
+        lines.extend(["Ungrouped responses:", ""])
+        for item in excluded:
+            lines.extend([f"- {_inline(item.text)} — {item.trace_id} · {item.world_id}: {_inline(item.reason)}", ""])
+    if doc.clustering_coverage is None:
+        lines.extend(["Clustering coverage was not recorded in this report.", ""])
     if not clusters:
-        lines.extend([f"No {noun} were found in this run.", ""])
+        if not excluded:
+            lines.extend([f"No {noun} were found in this run.", ""])
         return
     several = len({cluster.world_id for cluster in clusters}) > 1
 
@@ -539,6 +561,9 @@ def _to_data(doc: _Document) -> dict:
         "config_hash": doc.config_hash,
         "engine_commit": doc.engine_commit,
         "analysis_embedding_calls": [call.model_dump(mode="json") for call in doc.analysis_embedding_calls],
+        "clustering_exclusions": [item.model_dump(mode="json") for item in doc.clustering_exclusions],
+        "clustering_coverage": None if doc.clustering_coverage is None else [
+            item.model_dump(mode="json") for item in doc.clustering_coverage],
         "forced_from": list(doc.forced_from),
         "forced_inputs": list(doc.forced_inputs),
         "trust": {"level": doc.trust_level, "caveats": list(doc.trust_caveats)},
@@ -656,6 +681,8 @@ def render(
         "objection_clusters": pack.clusters,
         "reason_clusters": pack.reasons,
         "analysis_embedding_calls": pack.analysis_embedding_calls,
+        "clustering_exclusions": pack.clustering_exclusions,
+        "clustering_coverage": pack.clustering_coverage,
         "digests": validated_digests,
     })
     doc = _build(report.findings, report.digests, pack)

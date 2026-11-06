@@ -116,6 +116,8 @@ from .population import (
 from .result import RunResult, WorldOutcome
 from .report import (
     AnalysisEmbeddingCall,
+    ClusteringCoverage,
+    ClusteringExclusion,
     Anomaly,
     CalibrationRef,
     Finding,
@@ -324,6 +326,8 @@ __all__ = [
     "NonNegativeInt",
     "ObjectionCluster",
     "AnalysisEmbeddingCall",
+    "ClusteringCoverage",
+    "ClusteringExclusion",
     "OneOf",
     "OntologyDrafting",
     "OntologyHash",
