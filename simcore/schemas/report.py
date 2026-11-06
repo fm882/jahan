@@ -158,6 +158,7 @@ class AnalysisEmbeddingCall(SimBaseModel):
     category: Literal["objection", "reason"]
     attempt: Literal["initial", "retry"]
     costs: tuple[CostRecorded, ...] = ()
+    failure_code: Literal["invalid_embedding", "provider_unavailable"] | None = None
 
 
 class ClusteringExclusion(SimBaseModel):

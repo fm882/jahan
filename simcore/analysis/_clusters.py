@@ -12,8 +12,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from simcore.inference import EmbeddingFailure
+from simcore.ports.embed import InvalidEmbeddingData, embedding_array, normalise_embeddings
 from simcore.schemas import (AnalysisEmbeddingCall, ClusteringCoverage, ClusteringExclusion,
-                             ObjectionCluster, VerbatimGrouping, VerbatimRecord)
+                             FailureKind, ObjectionCluster, VerbatimGrouping, VerbatimRecord)
 
 
 # The share of the run's own objection pairs a group must be as similar as, when no threshold is given: groups join
@@ -132,16 +134,21 @@ def cluster_verbatims(records: Sequence[VerbatimRecord], *, embed, threshold: fl
             diagnostics.coverage.append(ClusteringCoverage(world_id=world_id, category=category,
                                                            eligible=0, clustered=0, excluded=0))
         return ()
-    vectors = _embed_once(embed, [record.text for record in records], embedding_calls=embedding_calls,
-                          world_id=world_id, category=category)
-    invalid = ~np.any(vectors != 0.0, axis=1)
+    vectors, reasons = _prepare_embeddings(embed, [record.text for record in records], embedding_calls=embedding_calls,
+                                          world_id=world_id, category=category)
+    invalid = np.array([reason is not None for reason in reasons])
     if diagnostics is None and invalid.any():
         raise ValueError("clustering is incomplete; collect diagnostics to retain unclustered responses")
     if diagnostics is not None:
+        messages = {
+            "zero_vector": "The embedding remained zero after one fresh retry.",
+            "non_finite": "The embedding remained non-finite after one fresh retry.",
+            "invalid_embedding": "The embedding response remained unusable after one fresh retry.",
+        }
         diagnostics.exclusions.extend(ClusteringExclusion(
             world_id=world_id, category=category, text=record.text, trace_id=record.event_id,
-            reason_code="zero_vector", reason="The embedding remained zero after one fresh retry.",
-        ) for record, excluded in zip(records, invalid, strict=True) if excluded)
+            reason_code=reason, reason=messages[reason],
+        ) for record, reason in zip(records, reasons, strict=True) if reason)
         diagnostics.coverage.append(ClusteringCoverage(
             world_id=world_id, category=category, eligible=eligible,
             clustered=int((~invalid).sum()), excluded=int(invalid.sum()),
@@ -196,32 +203,50 @@ def _ordered_verbatims(view) -> list[VerbatimRecord]:
     return sorted(records, key=lambda record: record.event_id)
 
 
-def _embed_once(embed, texts: Sequence[str], *, embedding_calls=None, world_id=None,
-                category="objection") -> np.ndarray:
-    def request(texts, *, retry=False):
-        result = embed.embed(texts, bypass_cache=True) if retry else embed.embed(texts)
-        if result.model_id != embed.model_id:
-            raise ValueError("clustering embedding result does not match the pinned model")
+def _prepare_embeddings(embed, texts: Sequence[str], *, embedding_calls=None, world_id=None,
+                         category="objection") -> tuple[np.ndarray, list[str | None]]:
+    def request(texts, *, retry=False, dimension=None):
+        failure_code = None
+        try:
+            result = embed.embed(texts, bypass_cache=True) if retry else embed.embed(texts)
+            costs = result.costs
+        except InvalidEmbeddingData as error:
+            result, costs = error.result, error.costs
+            failure_code = "invalid_embedding"
+        except EmbeddingFailure as error:
+            if error.failure.kind is not FailureKind.INVALID_OUTPUT:
+                raise
+            result, costs = None, error.failure.costs
+            failure_code = "invalid_embedding"
         if embedding_calls is not None:
             embedding_calls.append(AnalysisEmbeddingCall(
                 world_id=world_id, category=category, attempt="retry" if retry else "initial",
-                costs=result.costs,
+                costs=costs, failure_code=failure_code,
             ))
-        return np.asarray(result.vectors, dtype=np.float64)
+        if result is None:
+            return None, ["invalid_embedding"] * len(texts)
+        if result.model_id != embed.model_id:
+            raise ValueError("clustering embedding result does not match the pinned model")
+        try:
+            array = embedding_array(result.vectors, len(texts), dimension=dimension or result.dim)
+        except InvalidEmbeddingData:
+            return None, ["invalid_embedding"] * len(texts)
+        return normalise_embeddings(array)
 
-    vectors = request(texts)
-    if vectors.shape[0] != len(texts):
-        raise ValueError(f"embedding returned {vectors.shape[0]} vectors for {len(texts)} verbatims")
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    invalid = np.flatnonzero(norms[:, 0] == 0.0)
+    vectors, reasons = request(texts)
+    invalid = [index for index, reason in enumerate(reasons) if reason is not None]
     if len(invalid):
-        replacement = request([texts[index] for index in invalid], retry=True)
-        if replacement.shape != (len(invalid), vectors.shape[1]):
-            raise ValueError("retry embedding shape does not match the submitted verbatims")
-        vectors[invalid] = replacement
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
-    return vectors / norms
+        replacement, retry_reasons = request([texts[index] for index in invalid], retry=True,
+                                             dimension=vectors.shape[1] if vectors is not None else None)
+        if vectors is None:
+            vectors = replacement
+        elif replacement is not None:
+            vectors[invalid] = replacement
+        for index, reason in zip(invalid, retry_reasons, strict=True):
+            reasons[index] = reason
+    if vectors is None:
+        vectors = np.zeros((len(texts), 0))
+    return vectors, reasons
 
 
 def _ordered_components(components: list[list[int]], records: list[VerbatimRecord]) -> list[list[int]]:

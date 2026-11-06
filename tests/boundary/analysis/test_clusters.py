@@ -126,6 +126,15 @@ def test_incomplete_legacy_cluster_call_cannot_silently_drop_evidence():
         cluster_objections(_SingleTextView(["one", "two"]), embed=Zeros())
 
 
+def test_an_embedding_programming_error_still_propagates():
+    class Broken(FakeEmbed):
+        def embed(self, texts, *, bypass_cache=False):
+            raise ValueError("an unrelated implementation defect")
+
+    with pytest.raises(ValueError, match="unrelated implementation defect"):
+        cluster_objections(_SingleTextView(["one"]), embed=Broken(), diagnostics=ClusteringDiagnostics())
+
+
 def _seeded_view(store: TraceStore):
     from tests.study_builders import partition_payload as payload
 

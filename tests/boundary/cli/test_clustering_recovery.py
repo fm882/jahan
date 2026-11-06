@@ -16,6 +16,39 @@ from tests.boundary.inference.test_scale import FakeTime
 from simcore.ports.fake import FakeEmbed
 
 
+@pytest.fixture
+def objecting_study(monkeypatch):
+    prepare = _concepts.prepare_study
+
+    def preparing(**kwargs):
+        handles = prepare(**kwargs)
+        original = handles.chat._responder
+        counter = 0
+
+        def responder(messages, template):
+            nonlocal counter
+            payload = json.loads(original(messages, template))
+            if "verbatim" in payload:
+                counter += 1
+                payload["verbatim"] = f"Too expensive, response {counter}"
+                payload["belief_deltas"] = {"dimensions": {"value": -0.05}}
+            return json.dumps(payload)
+
+        handles.chat._responder = responder
+        return handles
+
+    monkeypatch.setattr(_concepts, "prepare_study", preparing)
+
+
+def real_analysis_client(handles, handler, **settings):
+    time = FakeTime()
+    return InferenceClient(
+        handles.config.pins,
+        ExecutionSettings(base_url="http://gateway.test/v1", embeddings_batch_size=1000, **settings),
+        transport=httpx.MockTransport(handler), clock=time.clock, sleep=time.sleep,
+    )
+
+
 def test_zero_embedding_gets_one_fresh_retry_and_saved_report(tmp_path, monkeypatch):
     original = _concepts.analyze_study
     requests, calls = [], []
@@ -172,3 +205,58 @@ def test_persistent_invalid_vectors_finish_with_disclosed_evidence(tmp_path, mon
         for clusters in (report["objection_clusters"], report["reason_clusters"]):
             assert not {item["trace_id"] for item in exclusions}.intersection(
                 trace_id for cluster in clusters for trace_id in cluster["verbatim_trace_ids"])
+
+
+@pytest.mark.parametrize("corruption", ["zero", "nan", "inf", "-inf", "empty", "ragged", "count", "nonnumeric", "indices"])
+@pytest.mark.parametrize("recovers", [False, True])
+def test_malformed_provider_data_reaches_recovered_or_disclosed_report(
+    tmp_path, monkeypatch, objecting_study, corruption, recovers,
+):
+    analyze = _concepts.analyze_study
+    requests = []
+
+    def analyzing(handles, result):
+        def handler(request):
+            body = json.loads(request.content)
+            requests.append(body["input"])
+            rows = [{"index": index, "embedding": [1.0, 0.0]} for index in range(len(body["input"]))]
+            if not recovers or len(requests) == 1:
+                if corruption in {"zero", "nan", "inf", "-inf"}:
+                    rows[0]["embedding"] = [0.0, 0.0] if corruption == "zero" else [float(corruption), 0.0]
+                elif corruption == "empty":
+                    for row in rows:
+                        row["embedding"] = []
+                elif corruption == "ragged":
+                    rows[0]["embedding"] = [1.0]
+                elif corruption == "count":
+                    rows = []
+                elif corruption == "nonnumeric":
+                    rows[0]["embedding"] = ["broken", 0.0]
+                elif corruption == "indices":
+                    rows[0]["index"] = -1
+            # JSON's NaN extension reaches the same decoding path as a bad gateway response.
+            return httpx.Response(200, content=json.dumps({
+                "model": body["model"], "data": rows, "usage": {"prompt_tokens": 2, "cost": 0.01},
+            }).encode())
+
+        handles.embed = real_analysis_client(handles, handler, cache_dir=tmp_path / "cache", max_retries=0)
+        return analyze(handles, result)
+
+    monkeypatch.setattr(_concepts, "analyze_study", analyzing)
+    run_id = "run-" + "0" * 24 + "93"
+    code, output = run_command(*fake_args(tmp_path / "runs", run_id, channels="forum"))
+    assert code == 0, output
+    root = tmp_path / "runs" / run_id
+    report = json.loads((root / "report.json").read_text())
+    assert len(requests) == 2
+    if corruption in {"zero", "nan", "inf", "-inf"}:
+        assert requests[1] == requests[0][:1]  # valid siblings keep their mappings
+    else:
+        assert requests[1] == requests[0]  # malformed mapping cannot be guessed
+    assert bool(report["clustering_exclusions"]) is not recovers
+    assert sum(cost["cost"] for call in report["analysis_embedding_calls"] for cost in call["costs"]) == 0.02
+    assert all(call["failure_code"] == "invalid_embedding" for call in report["analysis_embedding_calls"][:1])
+    if not recovers:
+        assert "could not be grouped" in (root / "report.md").read_text()
+        # No invalid batch may populate the persistent embedding cache.
+        assert list((tmp_path / "cache").rglob("*.json")) == []
