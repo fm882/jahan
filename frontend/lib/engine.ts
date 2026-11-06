@@ -289,6 +289,21 @@ export interface MethodDisclosure {
   template_hashes: { name: string; hash: string }[];
   anchor_set_hashes: { name: string; hash: string }[];
 }
+export interface ClusteringCoverage {
+  world_id: string;
+  category: "objection" | "reason";
+  eligible: number;
+  clustered: number;
+  excluded: number;
+}
+export interface ClusteringExclusion {
+  world_id: string;
+  category: "objection" | "reason";
+  text: string;
+  trace_id: string;
+  reason_code: string;
+  reason: string;
+}
 export interface StudyReport {
   contract_version: string;
   run_id: string;
@@ -299,6 +314,8 @@ export interface StudyReport {
   objection_clusters: ObjectionCluster[];
   /* What persuaded, grouped as objections are (ADR 0053). Absent on reports written before it. */
   reason_clusters?: ObjectionCluster[];
+  clustering_coverage?: ClusteringCoverage[] | null;
+  clustering_exclusions?: ClusteringExclusion[];
   digests: OutcomeDigest[];
   assumptions: Assumption[];
   method: MethodDisclosure;
