@@ -9,7 +9,7 @@ import { PageHead, Chip, Callout, ICONS, Tip, Kpi, Section } from "@/components/
 import { useApi, useRunId } from "@/lib/api";
 import type { ClusteringCoverage, ClusteringExclusion, Finding, ObjectionCluster, OutcomeDigest, RunSummary, StudyReport } from "@/lib/engine";
 import { versionName, worldName } from "@/lib/worlds";
-import { clusteringNotice } from "@/lib/clustering";
+import { clusteringForWorld, clusteringNotice } from "@/lib/clustering";
 import { BeliefMoves, CommunityIntent, IntentDiverging, IntentOverWaves } from "@/components/charts";
 
 interface Detail {
@@ -213,11 +213,11 @@ export default function ReportPage() {
           {tab === "why" && <Section icon="forum" title="Why" tip="What held people back and what persuaded them — each group labelled with something a persona actually wrote, sized by how many times it was said — and how their beliefs moved.">
             <div className="rp-why">
               <Groups title="What held people back" icon="alert" tone="no" clusters={objections} runId={runId} empty="No objections were found: no persona's turn objected."
-                coverage={r.clustering_coverage?.filter((c) => c.category === "objection" && ofWorld(c.world_id))}
-                exclusions={(r.clustering_exclusions ?? []).filter((c) => c.category === "objection" && ofWorld(c.world_id))} noun="objections" />
+                coverage={clusteringForWorld(r.clustering_coverage, worldId, "objection")}
+                exclusions={clusteringForWorld(r.clustering_exclusions, worldId, "objection") ?? []} noun="objections" />
               <Groups title="What persuaded" icon="check" tone="ok" clusters={reasons} runId={runId} empty={r.reason_clusters ? "No reasons to buy were found." : "This report was written before reasons to buy were collected."}
-                coverage={r.clustering_coverage?.filter((c) => c.category === "reason" && ofWorld(c.world_id))}
-                exclusions={(r.clustering_exclusions ?? []).filter((c) => c.category === "reason" && ofWorld(c.world_id))} noun="reasons to buy" />
+                coverage={clusteringForWorld(r.clustering_coverage, worldId, "reason")}
+                exclusions={clusteringForWorld(r.clustering_exclusions, worldId, "reason") ?? []} noun="reasons to buy" />
             </div>
             {lead && Object.values(lead.belief_movement_abs ?? {}).some((v) => v !== 0) && <div style={{ marginTop: 16 }}><div className="lbl">{ICONS.sliders} How beliefs moved</div><BeliefMoves mean={lead.belief_movement_mean} abs={lead.belief_movement_abs} /></div>}
           </Section>}
