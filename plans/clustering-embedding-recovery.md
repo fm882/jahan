@@ -118,25 +118,33 @@ continue to render with coverage treated as unknown.
 
 ### Acceptance criteria
 
-- [ ] A study with mixed valid and persistently invalid embeddings finishes,
+- [x] A study with mixed valid and persistently invalid embeddings finishes,
       writes its reports and displays exclusions in the report UI and Markdown.
-- [ ] Each excluded response retains exact text, trace ID, world, category and
+- [x] Each excluded response retains exact text, trace ID, world, category and
       an explicit reason; structured report consumers receive the same facts.
-- [ ] Every eligible trace ID is assigned exactly once, and coverage counts
+- [x] Every eligible trace ID is assigned exactly once, and coverage counts
       reconcile with cluster membership and exclusions in each category/world.
-- [ ] Thresholds, medoids, sizes and cluster-derived findings use only valid
+- [x] Thresholds, medoids, sizes and cluster-derived findings use only valid
       responses. An explicitly empty computed cluster set does not trigger a
       second embedding call while preparing findings.
-- [ ] Both categories handle no eligible records without an embedding call,
+- [x] Both categories handle no eligible records without an embedding call,
       one valid record as a singleton, and zero valid records as unavailable.
-- [ ] A report with both categories unavailable still contains its original
+- [x] A report with both categories unavailable still contains its original
       responses, digests and independently supported findings and anomalies.
-- [ ] The UI does not show “no objections” or “no reasons to buy” for unavailable
+- [x] The UI does not show “no objections” or “no reasons to buy” for unavailable
       clustering. Legacy reports remain readable without fabricated coverage.
-- [ ] Exclusions are not represented as a semantic cluster, and public reasons
+- [x] Exclusions are not represented as a semantic cluster, and public reasons
       expose no provider credentials or raw request payloads.
 
 ---
+
+Phase 2 evidence: analysis/report checks passed (146 passing cases before a
+fixture correction; all three pipeline recovery cases then passed). Mixed and
+all-invalid studies verify both categories, exact text/trace retention, separate
+coverage, no repeated findings embedding and preserved independent findings.
+All 46 frontend tests and the frontend type check passed. The UI reuses existing
+report styles, exposes trace links, and distinguishes unavailable clustering
+from no eligible responses; historical coverage remains unknown.
 
 ## Phase 3: Handle malformed vectors and poisoned cache entries
 
