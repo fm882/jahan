@@ -9,7 +9,7 @@ import { PageHead, Chip, Callout, ICONS, Tip, Kpi, Section } from "@/components/
 import { useApi, useRunId } from "@/lib/api";
 import type { ClusteringCoverage, ClusteringExclusion, Finding, ObjectionCluster, OutcomeDigest, RunSummary, StudyReport } from "@/lib/engine";
 import { versionName, worldName } from "@/lib/worlds";
-import { clusteringForWorld, clusteringNotice } from "@/lib/clustering";
+import { analysisCostLabel, clusteringForWorld, clusteringNotice } from "@/lib/clustering";
 import { BeliefMoves, CommunityIntent, IntentDiverging, IntentOverWaves } from "@/components/charts";
 
 interface Detail {
@@ -294,7 +294,7 @@ export default function ReportPage() {
               {!!r.analysis_embedding_calls?.length && <MethodRow icon="info" label="Report analysis calls">
                 <p className="sub">These costs are separate from simulation spend.</p>
                 {r.analysis_embedding_calls.filter((call) => ofWorld(call.world_id)).map((call, index) => <p key={index} className="sub">
-                  {call.category === "objection" ? "Objections" : "Reasons to buy"} · {call.attempt === "retry" ? "fresh retry" : "initial request"}: {call.costs.length ? call.costs.map((cost) => `${cost.cost} USD (${cost.route})`).join(", ") : "no reported bill"}
+                  {call.category === "objection" ? "Objections" : "Reasons to buy"} · {call.attempt === "retry" ? "fresh retry" : "initial request"}: {call.costs.length ? call.costs.map((cost) => analysisCostLabel(cost.cost, cost.route)).join(", ") : "no reported bill"}
                   {call.failure_kind && <> · {call.failure_kind}{call.provider_attempts != null && ` after ${call.provider_attempts} provider attempts`}</>}
                 </p>)}
               </MethodRow>}

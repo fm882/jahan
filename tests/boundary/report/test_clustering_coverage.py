@@ -29,6 +29,19 @@ def test_historical_report_loads_with_unknown_coverage():
     assert "coverage was not recorded" in rendered.markdown
 
 
+def test_unreported_analysis_prices_remain_unknown_in_both_report_formats():
+    settings = pack()
+    call = dict(category="objection", attempt="initial", costs=[dict(
+        kind="cost", role="embed", model_id=settings.config.pins.embed.model_id,
+        served_model_id=settings.config.pins.embed.model_id,
+        route="primary", cost_source="unknown", input_tokens=2, output_tokens=0, cost=None,
+    )])
+    rendered = render((), digests(), pack(analysis_embedding_calls=(call,)))
+    assert rendered.data["analysis_embedding_calls"][0]["costs"][0]["cost"] is None
+    assert "cost unreported (primary)" in rendered.markdown
+    assert "None USD" not in rendered.markdown
+
+
 @pytest.mark.parametrize("defect", ["missing", "duplicate", "arithmetic", "unassigned", "repeated_evidence"])
 def test_coverage_refuses_inconsistent_evidence(defect):
     payload = report_payload()

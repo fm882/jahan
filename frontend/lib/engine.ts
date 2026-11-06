@@ -310,7 +310,7 @@ export interface AnalysisEmbeddingCall {
   attempt: "initial" | "retry";
   failure_kind?: string | null;
   provider_attempts?: number | null;
-  costs: { cost: number; model_id: string; served_model_id?: string | null; route: string }[];
+  costs: { cost: number | null; model_id: string; served_model_id?: string | null; route: string }[];
 }
 export interface StudyReport {
   contract_version: string;

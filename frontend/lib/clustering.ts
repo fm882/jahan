@@ -1,5 +1,9 @@
 import type { ClusteringCoverage } from "./engine";
 
+export function analysisCostLabel(cost: number | null, route: string): string {
+  return `${cost == null ? "cost unreported" : `${cost} USD`} (${route})`;
+}
+
 export function clusteringForWorld<T extends { world_id: string; category: "objection" | "reason" }>(
   items: T[] | null | undefined, worldId: string | null, category: "objection" | "reason",
 ): T[] | undefined {

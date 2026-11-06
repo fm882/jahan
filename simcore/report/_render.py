@@ -356,7 +356,8 @@ def _to_markdown(doc: _Document) -> str:
         lines.extend(["Analysis embedding calls (separate from simulation spend):", ""])
         for call in doc.analysis_embedding_calls:
             lines.append(f"- {call.world_id or 'unnamed world'} · {call.category} · {call.attempt}: "
-                         + (", ".join(f"{cost.cost!r} USD ({cost.route.value})" for cost in call.costs) or "no reported bill")
+                         + (", ".join((f"{cost.cost!r} USD" if cost.cost is not None else "cost unreported")
+                                      + f" ({cost.route.value})" for cost in call.costs) or "no reported bill")
                          + (f" · {call.failure_kind.value}" if call.failure_kind else "")
                          + (f" after {call.provider_attempts} provider attempts" if call.provider_attempts is not None else ""))
         lines.append("")

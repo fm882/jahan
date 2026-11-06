@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clusteringForWorld, clusteringNotice } from "../lib/clustering.ts";
+import { analysisCostLabel, clusteringForWorld, clusteringNotice } from "../lib/clustering.ts";
 
 const coverage = { world_id: "world", category: "objection" as const, eligible: 42, clustered: 39, excluded: 3 };
+
+test("unreported analysis prices remain distinct from free calls", () => {
+  assert.equal(analysisCostLabel(null, "primary"), "cost unreported (primary)");
+  assert.equal(analysisCostLabel(0, "cache"), "0 USD (cache)");
+});
 
 test("partial coverage discloses missing response counts", () => {
   assert.equal(clusteringNotice([coverage], "objections"), "3 of 42 objections could not be grouped.");
