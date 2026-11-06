@@ -214,25 +214,33 @@ returned. Do not infer missing successful rows from billing ranges alone.
 
 ### Acceptance criteria
 
-- [ ] A provider outage on the initial clustering request finishes the report
+- [x] A provider outage on the initial clustering request finishes the report
       with exclusions after existing network retries; no new outer outage retry
       loop is added.
-- [ ] An outage during the invalid-data recovery attempt similarly finishes
+- [x] An outage during the invalid-data recovery attempt similarly finishes
       after that attempt's configured network retries, with no second recovery.
-- [ ] Valid rows retained before a failed retry still form clusters, while only
+- [x] Valid rows retained before a failed retry still form clusters, while only
       the affected rows receive provider-unavailable exclusions.
-- [ ] Exhausting one category does not prevent independent analysis of the
+- [x] Exhausting one category does not prevent independent analysis of the
       other category, or suppress unrelated report content.
-- [ ] Failed attempts and successful sibling batches retain their physical
+- [x] Failed attempts and successful sibling batches retain their physical
       bills, model identities and failure metadata without duplicate totals.
-- [ ] Recovery spend is inspectable separately from saved simulation spend;
+- [x] Recovery spend is inspectable separately from saved simulation spend;
       finalized simulation traces remain unchanged.
-- [ ] Structured and rendered reports distinguish provider unavailability from
+- [x] Structured and rendered reports distinguish provider unavailability from
       invalid vector data without exposing sensitive provider details.
-- [ ] Unrecognized exceptions propagate; simulation-time outages retain their
+- [x] Unrecognized exceptions propagate; simulation-time outages retain their
       existing failure behavior.
 
 ---
+
+Phase 4 evidence: 91 report, inference and full-pipeline cases passed; frontend
+types passed. Outages at the initial call and at the invalid-data retry make
+exactly the configured provider attempts, disclose exclusions and preserve the
+other category. A per-text multi-batch outage retains every successful sibling
+bill without guessing their vectors. Partition hashes remain unchanged. JSON,
+Markdown and the report method view expose separate analysis calls and safe
+failure kind/attempt metadata without raw provider details.
 
 ## Phase 5: Prove multi-world reporting and saved-run recovery offline
 
