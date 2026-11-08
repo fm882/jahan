@@ -4,7 +4,7 @@ joined with the run configuration they describe."""
 import math
 from collections import Counter
 from collections.abc import Iterable
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import AwareDatetime, Field, computed_field, model_validator
 
@@ -20,10 +20,10 @@ from .base import (
     canonical_hash,
     proportions_sum_to_one,
 )
-from .enums import ActionKind, AnomalyKind, BeliefDim, Channel, Confidence, DegradationRung, FindingKind, TickUnit, TrustLevel
+from .enums import ActionKind, AnomalyKind, BeliefDim, Channel, Confidence, DegradationRung, FailureKind, FindingKind, TickUnit, TrustLevel
 from .run import PinnedModelId, RunConfig, WorldId
 from .sim import PMF5
-from .trace import EventId
+from .trace import CostRecorded, EventId
 
 # A benchmark must reach both floors before any calibrated trust level can be claimed — the same 0.80
 # the engine's own ordinal distribution gate and reference-set rank-stability checks hold themselves to.
@@ -149,6 +149,45 @@ class UnmeasuredAnomaly(SimBaseModel):
     scenario_hash: HashDigest
     reason: NonEmptyStr
     threshold: float
+
+
+class AnalysisEmbeddingCall(SimBaseModel):
+    """One analysis invocation's bills, separate from immutable simulation spend."""
+
+    world_id: WorldId | None = None
+    category: Literal["objection", "reason"]
+    attempt: Literal["initial", "retry"]
+    costs: tuple[CostRecorded, ...] = ()
+    failure_code: Literal["invalid_embedding", "provider_unavailable"] | None = None
+    failure_kind: FailureKind | None = None
+    provider_attempts: NonNegativeInt | None = None
+
+
+class ClusteringExclusion(SimBaseModel):
+    """Original evidence that could not be grouped; never a semantic cluster."""
+
+    world_id: WorldId | None = None
+    category: Literal["objection", "reason"]
+    text: NonEmptyStr
+    trace_id: EventId
+    reason_code: Literal["zero_vector", "non_finite", "invalid_embedding", "provider_unavailable"]
+    reason: NonEmptyStr
+
+
+class ClusteringCoverage(SimBaseModel):
+    """Response counts for one world's eligible category, not persona counts."""
+
+    world_id: WorldId | None = None
+    category: Literal["objection", "reason"]
+    eligible: NonNegativeInt
+    clustered: NonNegativeInt
+    excluded: NonNegativeInt
+
+    @model_validator(mode="after")
+    def _counts_reconcile(self) -> Self:
+        if self.eligible != self.clustered + self.excluded:
+            raise ValueError("eligible clustering responses must equal clustered plus excluded")
+        return self
 
 
 class ObjectionCluster(SimBaseModel):
@@ -476,7 +515,43 @@ class Report(SimBaseModel):
     objection_clusters: tuple[ObjectionCluster, ...] = ()
     # What persuaded, grouped exactly as objections are (ADR 0053): a quoted medoid and the verbatims it stands for.
     reason_clusters: tuple[ObjectionCluster, ...] = ()
+    analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...] = ()
+    clustering_exclusions: tuple[ClusteringExclusion, ...] = ()
+    # None means an older report did not record coverage, not complete coverage.
+    clustering_coverage: tuple[ClusteringCoverage, ...] | None = None
     digests: tuple[OutcomeDigest, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _clustering_evidence_reconciles(self) -> Self:
+        if self.clustering_coverage is None:
+            if self.clustering_exclusions:
+                raise ValueError("clustering exclusions require coverage")
+            return self
+        digested = {digest.world_id for digest in self.digests}
+        keys = [(item.world_id, item.category) for item in self.clustering_coverage]
+        if len(keys) != len(set(keys)):
+            raise ValueError("clustering coverage repeats a world/category")
+        expected = {(world, category) for world in digested for category in ("objection", "reason")}
+        if set(keys) != expected:
+            raise ValueError("clustering coverage must describe both categories of every digested world")
+        for item in self.clustering_coverage:
+            if item.world_id not in digested:
+                raise ValueError("clustering coverage names an undigested world")
+            clusters = self.objection_clusters if item.category == "objection" else self.reason_clusters
+            groups = [cluster for cluster in clusters if cluster.world_id == item.world_id]
+            clustered = [trace_id for cluster in groups for trace_id in cluster.verbatim_trace_ids]
+            excluded = [record.trace_id for record in self.clustering_exclusions
+                        if (record.world_id, record.category) == (item.world_id, item.category)]
+            if len(clustered) != item.clustered or sum(cluster.size for cluster in groups) != item.clustered:
+                raise ValueError("clustering coverage differs from clustered evidence")
+            if len(excluded) != item.excluded or len(set(clustered + excluded)) != item.eligible:
+                raise ValueError("clustering coverage must assign every response exactly once")
+        if any((record.world_id, record.category) not in keys for record in self.clustering_exclusions):
+            raise ValueError("clustering exclusion has no coverage entry")
+        for category, clusters in (("objection", self.objection_clusters), ("reason", self.reason_clusters)):
+            if any((cluster.world_id, category) not in keys for cluster in clusters):
+                raise ValueError("cluster has no coverage entry")
+        return self
 
     @model_validator(mode="after")
     def _digests_describe_this_runs_worlds(self) -> Self:

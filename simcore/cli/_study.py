@@ -735,6 +735,12 @@ def write_report(handles: StudyHandles, analysis: dict, *, validation: str) -> d
         anomalies=tuple(all_anomalies),
         clusters=tuple(all_clusters),
         reasons=tuple(all_reasons),
+        analysis_embedding_calls=tuple(call for cell in analysis["worlds"].values()
+                                       for call in cell.get("embedding_calls", ())),
+        clustering_coverage=tuple(item for cell in analysis["worlds"].values()
+                                  for item in cell.get("clustering_coverage", ())),
+        clustering_exclusions=tuple(item for cell in analysis["worlds"].values()
+                                    for item in cell.get("clustering_exclusions", ())),
         forced_from=tuple(entry.forced_from),
         forced_inputs=tuple(entry.forced_inputs),
     )

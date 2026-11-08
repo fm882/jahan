@@ -116,7 +116,8 @@ class EmbeddingVectors:
     headers: object
 
 
-from simcore.ports.embed import EmbedBatch, EmbedResult as EmbeddingResult
+from simcore.ports.embed import (EmbedBatch, EmbedResult as EmbeddingResult, InvalidEmbeddingData,
+                                 embedding_array, normalise_embeddings)
 
 # The inference client satisfies `EmbedPort`: it returns vectors in input order with the pinned
 # and served model and the cost of every batch, so it can be passed wherever the fake is.
@@ -130,12 +131,6 @@ class EmbeddingFailure(RuntimeError):
     def __init__(self, failure: CallFailure) -> None:
         super().__init__(f"embedding call failed: {failure.kind.value} — {failure.detail}")
         self.failure = failure
-
-
-def _normalised(vectors: list[list[float]]) -> "np.ndarray":
-    array = np.asarray(vectors, dtype=np.float32)
-    norms = np.linalg.norm(array, axis=1, keepdims=True)
-    return array / np.where(norms == 0, 1.0, norms)
 
 
 @dataclass(frozen=True)
@@ -253,7 +248,8 @@ class InferenceClient:
         )
         return self.complete((request,))[0]
 
-    def embed(self, texts: Sequence[str], *, role: InferenceRole = InferenceRole.EMBED) -> "EmbeddingResult":
+    def embed(self, texts: Sequence[str], *, role: InferenceRole = InferenceRole.EMBED,
+              bypass_cache: bool = False) -> "EmbeddingResult":
         """Capped batches to the one pinned embedding model, through the same endpoint, queue, ceiling
         and limiter as every chat call. Embedding never falls back: anchors and vectors scored in
         different embedding spaces are not comparable (ADR 0012), so an exhausted batch fails the call
@@ -269,7 +265,7 @@ class InferenceClient:
         batches = [list(texts[start : start + cap]) for start in range(0, len(texts), cap)]
         batch, batch_context = start_span("inference.embeddings.batch", {SIMCORE_BATCH_SIZE: len(texts), GEN_AI_REQUEST_MODEL: pin.model_id}, operation="embeddings", provider=self._tracer_provider)
         try:
-            results = run(self._embed_all(batches, batch_context, role))
+            results = run(self._embed_all(batches, batch_context, role, bypass_cache=bypass_cache))
         finally:
             finish(batch, ok=True)
         vectors = np.concatenate([result.vectors for result in results], axis=0)
@@ -285,10 +281,11 @@ class InferenceClient:
             batches=tuple(batch for result in results for batch in result.batches),
         )
 
-    async def _embed_all(self, batches: list[list[str]], batch_context, role: InferenceRole) -> list:
+    async def _embed_all(self, batches: list[list[str]], batch_context, role: InferenceRole,
+                         *, bypass_cache: bool = False) -> list:
         async def physical(batch, start):
             try:
-                result = await self._embed_batch(batch, batch_context, role)
+                result = await self._embed_batch(batch, batch_context, role, bypass_cache=bypass_cache)
             except Exception as error:
                 costs = error.failure.costs if isinstance(error, EmbeddingFailure) else getattr(error, "costs", ())
                 error.batches = (EmbedBatch(start, start + len(batch), tuple(costs)),)
@@ -307,9 +304,34 @@ class InferenceClient:
             position += len(batch)
         # Settle every chunk: cancelling or dropping siblings can lose already billed work.
         results = await asyncio.gather(*(physical(batch, start) for batch, start in zip(batches, starts, strict=True)))
-        failed = next((result for result in results if isinstance(result, Exception)), None)
+        errors = [result for result in results if isinstance(result, Exception)]
+
+        def failure_priority(error):
+            if isinstance(error, InvalidEmbeddingData):
+                return 2
+            if isinstance(error, EmbeddingFailure) and error.failure.kind is not FailureKind.PIN_FAILURE:
+                return 2 if error.failure.kind is FailureKind.INVALID_OUTPUT else 1
+            return 0  # A pin violation or programming error must never be hidden by bad sibling data.
+
+        failed = min(errors, key=failure_priority) if errors else None
         if failed is not None:
             failed.batches = tuple(batch for result in results for batch in result.batches)
+            failed.costs = tuple(cost for batch in failed.batches for cost in batch.costs)
+            if isinstance(failed, InvalidEmbeddingData):
+                mapped = [result.result if isinstance(result, InvalidEmbeddingData) else result for result in results]
+                if all(isinstance(result, EmbeddingResult) for result in mapped):
+                    dimensions = {result.dim for result in mapped}
+                    if len(dimensions) == 1:
+                        failed.result = EmbeddingResult(
+                            vectors=np.concatenate([result.vectors for result in mapped]),
+                            model_id=self.resolve(role).model_id,
+                            served_model_id=None, normalization=EMBEDDING_NORMALIZATION,
+                            dim=mapped[0].dim, costs=failed.costs, batches=failed.batches,
+                        )
+                    else:
+                        failed.result = None
+                else:
+                    failed.result = None
             if isinstance(failed, EmbeddingFailure):
                 failed.failure = failed.failure.model_copy(update={
                     "costs": tuple(cost for batch in failed.batches for cost in batch.costs),
@@ -317,10 +339,11 @@ class InferenceClient:
             raise failed
         return list(results)
 
-    async def _embed_batch(self, batch: list[str], batch_context, role: InferenceRole) -> "EmbeddingResult":
+    async def _embed_batch(self, batch: list[str], batch_context, role: InferenceRole,
+                           *, bypass_cache: bool = False) -> "EmbeddingResult":
         billed = []
         try:
-            return await self._embed_batch_impl(batch, batch_context, role, billed)
+            return await self._embed_batch_impl(batch, batch_context, role, billed, bypass_cache=bypass_cache)
         except Exception as error:
             if isinstance(error, EmbeddingFailure):
                 error.failure = error.failure.model_copy(update={"costs": tuple(billed)})
@@ -328,20 +351,32 @@ class InferenceClient:
                 error.costs = tuple(billed)
             raise
 
-    async def _embed_batch_impl(self, batch, batch_context, role, billed):
+    async def _embed_batch_impl(self, batch, batch_context, role, billed, *, bypass_cache=False):
         pin = self.resolve(role)
         span, call_context = start_span("inference.embeddings", {GEN_AI_REQUEST_MODEL: pin.model_id, SIMCORE_BATCH_SIZE: len(batch)}, parent=batch_context, operation="embeddings", provider=self._tracer_provider)
         data = body_bytes(embeddings_body(batch, pin))
         key = self._cache.key(pin, template_id=EMBEDDINGS_TEMPLATE, request_bytes=data) if self._cache else None
-        if key and (entry := self._cache.get(key)) is not None:  # type: ignore[union-attr]
-            self.stats.cache_hits += 1
-            vectors = np.asarray(entry["vectors"], dtype=np.float32)
-            cost = CostRecorded(
-                kind="cost", role=role, model_id=pin.model_id, served_model_id=entry.get("served_model_id"),
-                cost_source=CostSource.CACHE, route=InferenceRoute.CACHE,
-                input_tokens=entry.get("input_tokens", 0), output_tokens=0, cost=0.0,
-            )
-            return EmbeddingResult(vectors=vectors, model_id=pin.model_id, served_model_id=entry.get("served_model_id"), normalization=EMBEDDING_NORMALIZATION, dim=int(vectors.shape[1]), costs=(cost,))
+        if not bypass_cache and key and (entry := self._cache.get(key)) is not None:  # type: ignore[union-attr]
+            try:
+                array = embedding_array(entry.get("vectors"), len(batch), dimension=self._embedding_dims.get(role))
+                vectors, reasons = normalise_embeddings(array, dtype=np.float32)
+                if any(reasons) or entry.get("served_model_id") not in pin.serves:
+                    raise InvalidEmbeddingData("cached embeddings are unusable")
+                with np.errstate(over="ignore", under="ignore"):
+                    cached = array.astype(np.float32)
+                if np.isfinite(cached).all() and np.any(cached != 0.0, axis=1).all():
+                    vectors = cached  # Preserve valid cached bytes rather than normalizing twice.
+                cost = CostRecorded(
+                    kind="cost", role=role, model_id=pin.model_id, served_model_id=entry["served_model_id"],
+                    cost_source=CostSource.CACHE, route=InferenceRoute.CACHE,
+                    input_tokens=entry.get("input_tokens", 0), output_tokens=0, cost=0.0,
+                )
+            except ValueError:
+                pass  # Cache data is disposable; a malformed entry is a miss.
+            else:
+                self.stats.cache_hits += 1
+                self._embedding_dims.setdefault(role, int(vectors.shape[1]))
+                return EmbeddingResult(vectors=vectors, model_id=pin.model_id, served_model_id=entry["served_model_id"], normalization=EMBEDDING_NORMALIZATION, dim=int(vectors.shape[1]), costs=(cost,))
         attempts = 0
         oversized = float(sum(estimate_tokens(text) for text in batch))
         if not self._limiter.admissible(oversized):
@@ -377,19 +412,31 @@ class InferenceClient:
                 )
                 billed.append(cost)
                 try:
-                    vectors = _normalised(reply.outcome.vectors)
+                    array = embedding_array(reply.outcome.vectors, len(batch))
+                    vectors, reasons = normalise_embeddings(array, dtype=np.float32)
                     dimension = int(vectors.shape[1])
                     known = self._embedding_dims.setdefault(role, dimension)
                     if dimension != known:
-                        raise ValueError(
+                        raise InvalidEmbeddingData(
                             f"the pinned embedding model answered with {dimension} dimensions, but this run's "
                             f"first vectors had {known}; vectors from two spaces are not comparable"
                         )
+                    if any(reasons):
+                        # Keep invalid row markers in the failed result so analysis can
+                        # distinguish a zero vector from non-finite provider data.
+                        retained = vectors.astype(np.float64)
+                        for index, reason in enumerate(reasons):
+                            if reason == "non_finite":
+                                retained[index] = np.nan
+                        raise InvalidEmbeddingData("embedding rows must be finite and nonzero", result=EmbeddingResult(
+                            vectors=retained, model_id=pin.model_id, served_model_id=reply.outcome.served_model_id,
+                            normalization=EMBEDDING_NORMALIZATION, dim=dimension, costs=tuple(billed),
+                        ))
                 except Exception as error:
                     error.costs = tuple(billed)
                     finish(span, ok=False, attributes={SIMCORE_FAILURE_DETAIL: str(error)})
                     raise
-                if self._cache and key:
+                if self._cache and key and np.isfinite(vectors).all() and np.any(vectors != 0, axis=1).all():
                     self._cache.put(key, {"vectors": vectors.tolist(), "served_model_id": reply.outcome.served_model_id, "input_tokens": reply.outcome.input_tokens})
                 finish(span, ok=True, attributes={GEN_AI_RESPONSE_MODEL: reply.outcome.served_model_id, GEN_AI_USAGE_INPUT_TOKENS: reply.outcome.input_tokens, SIMCORE_COST: cost.cost, SIMCORE_COST_SOURCE: cost.cost_source.value, SIMCORE_ROUTE: cost.route.value})
                 return EmbeddingResult(vectors=vectors, model_id=pin.model_id, served_model_id=reply.outcome.served_model_id, normalization=EMBEDDING_NORMALIZATION, dim=dimension, costs=tuple(billed))
@@ -468,13 +515,19 @@ class InferenceClient:
         try:
             if not isinstance(data_items, list) or len(data_items) != len(batch):
                 raise ValueError("the embedding endpoint returned something that is not one vector per text")
+            if any(not isinstance(item, dict) or type(item.get("index")) is not int for item in data_items):
+                raise ValueError("embedding vector indices must be integers")
             ordered = sorted(data_items, key=lambda item: item["index"])
             if [item["index"] for item in ordered] != list(range(len(batch))):
                 raise ValueError("embedding vector indices do not match the submitted texts")
+            if any(not isinstance(item.get("embedding"), list) or
+                   any(type(component) not in (int, float) for component in item["embedding"])
+                   for item in ordered):
+                raise ValueError("embedding rows must be numeric lists")
             vectors = [[float(component) for component in item["embedding"]] for item in ordered]
-            if not vectors or not vectors[0] or any(len(vector) != len(vectors[0]) for vector in vectors) or not np.isfinite(vectors).all():
-                raise ValueError("embedding vectors must be finite, nonempty and of equal dimension")
-        except (KeyError, TypeError, ValueError) as error:
+            if not vectors or not vectors[0] or any(len(vector) != len(vectors[0]) for vector in vectors):
+                raise ValueError("embedding vectors must be nonempty and of equal dimension")
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
             return failure(FailureKind.INVALID_OUTPUT, str(error))
         return _Reply(EmbeddingVectors(vectors=vectors, served_model_id=served, input_tokens=input_tokens, payload=payload, headers=response.headers))
 

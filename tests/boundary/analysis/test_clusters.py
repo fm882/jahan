@@ -12,6 +12,7 @@ from tests.boundary.trace.support import seed_header_and_entry, write_by_tick
 from tests.study_builders import partition_payload
 
 from simcore.schemas import TraceEvent
+from simcore.analysis._clusters import ClusteringDiagnostics
 
 
 class _CountingEmbed(FakeEmbed):
@@ -89,6 +90,49 @@ class _SingleTextView:
 
     def events(self, _filter):
         return objecting_turns([record for group in self._groups for record in group.records])
+
+
+@pytest.mark.parametrize("texts", [[], ["one"], ["one", "two", "three"]])
+def test_coverage_preserves_empty_singleton_and_filtered_cluster_evidence(texts):
+    class Zeros(FakeEmbed):
+        def embed(self, texts, *, bypass_cache=False):
+            result = super().embed(texts)
+            for index, text in enumerate(texts):
+                if text != "one":
+                    result.vectors[index] = 0.0
+            return result
+
+    view = _SingleTextView(texts)
+    diagnostics = ClusteringDiagnostics()
+    clusters = cluster_objections(view, embed=Zeros(), diagnostics=diagnostics)
+    count = diagnostics.coverage[0]
+    assert count.eligible == len(texts)
+    assert count.clustered == bool(texts)
+    assert count.excluded == max(0, len(texts) - 1)
+    assert len(clusters) == bool(texts)
+    if texts:
+        assert clusters[0].label == "one" and clusters[0].size == 1
+    assert {item.text for item in diagnostics.exclusions} == set(texts) - {"one"}
+
+
+def test_incomplete_legacy_cluster_call_cannot_silently_drop_evidence():
+    class Zeros(FakeEmbed):
+        def embed(self, texts, *, bypass_cache=False):
+            result = super().embed(texts)
+            result.vectors[:] = 0.0
+            return result
+
+    with pytest.raises(ValueError, match="collect diagnostics"):
+        cluster_objections(_SingleTextView(["one", "two"]), embed=Zeros())
+
+
+def test_an_embedding_programming_error_still_propagates():
+    class Broken(FakeEmbed):
+        def embed(self, texts, *, bypass_cache=False):
+            raise ValueError("an unrelated implementation defect")
+
+    with pytest.raises(ValueError, match="unrelated implementation defect"):
+        cluster_objections(_SingleTextView(["one"]), embed=Broken(), diagnostics=ClusteringDiagnostics())
 
 
 def _seeded_view(store: TraceStore):

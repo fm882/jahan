@@ -9,7 +9,8 @@ commit the run came from. Rendering reads nothing but these three arguments.
 
 from dataclasses import dataclass, field
 
-from simcore.schemas import Anomaly, BriefPack, ObjectionCluster, Report, RunConfig, TrustStatement
+from simcore.schemas import (AnalysisEmbeddingCall, Anomaly, BriefPack, ClusteringCoverage,
+                             ClusteringExclusion, ObjectionCluster, Report, RunConfig, TrustStatement)
 from simcore.schemas.base import SCHEMA_VERSION
 
 
@@ -37,6 +38,9 @@ class ReportPack:
     anomalies: tuple[Anomaly, ...] = ()
     clusters: tuple[ObjectionCluster, ...] = ()
     reasons: tuple[ObjectionCluster, ...] = ()
+    analysis_embedding_calls: tuple[AnalysisEmbeddingCall, ...] = ()
+    clustering_exclusions: tuple[ClusteringExclusion, ...] = ()
+    clustering_coverage: tuple[ClusteringCoverage, ...] | None = None
     forced_from: tuple[str, ...] = ()
     forced_inputs: tuple[str, ...] = ()
     contract_version: str = SCHEMA_VERSION
@@ -78,6 +82,19 @@ class ReportPack:
             ),
         )
         object.__setattr__(self, "forced_from", tuple(self.forced_from))
+        object.__setattr__(self, "analysis_embedding_calls", tuple(
+            item if isinstance(item, AnalysisEmbeddingCall) else AnalysisEmbeddingCall.model_validate(item)
+            for item in self.analysis_embedding_calls
+        ))
+        object.__setattr__(self, "clustering_exclusions", tuple(
+            item if isinstance(item, ClusteringExclusion) else ClusteringExclusion.model_validate(item)
+            for item in self.clustering_exclusions
+        ))
+        if self.clustering_coverage is not None:
+            object.__setattr__(self, "clustering_coverage", tuple(
+                item if isinstance(item, ClusteringCoverage) else ClusteringCoverage.model_validate(item)
+                for item in self.clustering_coverage
+            ))
         object.__setattr__(self, "forced_inputs", tuple(self.forced_inputs))
 
 

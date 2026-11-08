@@ -7,8 +7,9 @@ import RunBar from "@/components/runbar";
 import { useSessionState } from "@/lib/session";
 import { PageHead, Chip, Callout, ICONS, Tip, Kpi, Section } from "@/components/ui";
 import { useApi, useRunId } from "@/lib/api";
-import type { Finding, ObjectionCluster, OutcomeDigest, RunSummary, StudyReport } from "@/lib/engine";
+import type { ClusteringCoverage, ClusteringExclusion, Finding, ObjectionCluster, OutcomeDigest, RunSummary, StudyReport } from "@/lib/engine";
 import { versionName, worldName } from "@/lib/worlds";
+import { analysisCostLabel, clusteringForWorld, clusteringNotice } from "@/lib/clustering";
 import { BeliefMoves, CommunityIntent, IntentDiverging, IntentOverWaves } from "@/components/charts";
 
 interface Detail {
@@ -211,8 +212,12 @@ export default function ReportPage() {
           </div>
           {tab === "why" && <Section icon="forum" title="Why" tip="What held people back and what persuaded them — each group labelled with something a persona actually wrote, sized by how many times it was said — and how their beliefs moved.">
             <div className="rp-why">
-              <Groups title="What held people back" icon="alert" tone="no" clusters={objections} runId={runId} empty="No objections were found: no persona's turn objected." />
-              <Groups title="What persuaded" icon="check" tone="ok" clusters={reasons} runId={runId} empty={r.reason_clusters ? "No reasons to buy were found." : "This report was written before reasons to buy were collected."} />
+              <Groups title="What held people back" icon="alert" tone="no" clusters={objections} runId={runId} empty="No objections were found: no persona's turn objected."
+                coverage={clusteringForWorld(r.clustering_coverage, worldId, "objection")}
+                exclusions={clusteringForWorld(r.clustering_exclusions, worldId, "objection") ?? []} noun="objections" />
+              <Groups title="What persuaded" icon="check" tone="ok" clusters={reasons} runId={runId} empty={r.reason_clusters ? "No reasons to buy were found." : "This report was written before reasons to buy were collected."}
+                coverage={clusteringForWorld(r.clustering_coverage, worldId, "reason")}
+                exclusions={clusteringForWorld(r.clustering_exclusions, worldId, "reason") ?? []} noun="reasons to buy" />
             </div>
             {lead && Object.values(lead.belief_movement_abs ?? {}).some((v) => v !== 0) && <div style={{ marginTop: 16 }}><div className="lbl">{ICONS.sliders} How beliefs moved</div><BeliefMoves mean={lead.belief_movement_mean} abs={lead.belief_movement_abs} /></div>}
           </Section>}
@@ -286,6 +291,13 @@ export default function ReportPage() {
               </MethodRow>
               <MethodRow icon="shuffle" label="Fallbacks"><span className="mono sub">{r.method.fallbacks.length ? r.method.fallbacks.map((p) => `${p.role}: ${p.model_id}`).join(" · ") : "none"}</span></MethodRow>
               <MethodRow icon="shuffle" label="Seeds"><span className="mono">{r.method.seeds.join(", ")}</span></MethodRow>
+              {!!r.analysis_embedding_calls?.length && <MethodRow icon="info" label="Report analysis calls">
+                <p className="sub">These costs are separate from simulation spend.</p>
+                {r.analysis_embedding_calls.filter((call) => ofWorld(call.world_id)).map((call, index) => <p key={index} className="sub">
+                  {call.category === "objection" ? "Objections" : "Reasons to buy"} · {call.attempt === "retry" ? "fresh retry" : "initial request"}: {call.costs.length ? call.costs.map((cost) => analysisCostLabel(cost.cost, cost.route)).join(", ") : "no reported bill"}
+                  {call.failure_kind && <> · {call.failure_kind}{call.provider_attempts != null && ` after ${call.provider_attempts} provider attempts`}</>}
+                </p>)}
+              </MethodRow>}
               <MethodRow icon="code" label="Prompt templates"><span className="mono sub">{r.method.template_hashes.map((t) => `${t.name} ${t.hash.slice(0, 8)}`).join(" · ")}</span></MethodRow>
               <MethodRow icon="survey" label="Anchor sets"><span className="mono sub">{r.method.anchor_set_hashes.map((t) => `${t.name} ${t.hash.slice(0, 8)}`).join(" · ")}</span></MethodRow>
               <MethodRow icon="target" label="Validation"><span className="sub">{r.validation}</span></MethodRow>
@@ -334,8 +346,9 @@ function VersionBars({ digests, nameOf, chosen, onPick }: {
 
 /* Groups of what personas said, one direction: the largest first, each labelled with a sentence a persona
    wrote and sized by how many said something like it; the long tail folded, never dropped. */
-function Groups({ title, icon, tone, clusters, runId, empty }: {
+function Groups({ title, icon, tone, clusters, runId, empty, coverage, exclusions, noun }: {
   title: string; icon: keyof typeof ICONS; tone: "ok" | "no"; clusters: ObjectionCluster[]; runId: string | null; empty: string;
+  coverage?: ClusteringCoverage[]; exclusions: ClusteringExclusion[]; noun: string;
 }) {
   const biggest = Math.max(1, ...clusters.map((c) => c.size));
   const card = (c: ObjectionCluster, i: number) => (
@@ -351,7 +364,15 @@ function Groups({ title, icon, tone, clusters, runId, empty }: {
   return (
     <div className="rp-groups">
       <div className="lbl">{ICONS[icon]} {title} <span className="count-pill">{clusters.length}</span></div>
-      {clusters.length === 0 ? <p className="sub">{empty}</p> : (
+      <p className="sub">{clusteringNotice(coverage, noun)}</p>
+      {exclusions.length > 0 && <details className="fold">
+        <summary>{exclusions.length} ungrouped responses</summary>
+        <ul>{exclusions.map((item) => <li key={item.trace_id}>
+          <p>“{item.text}”</p><p className="sub">{item.reason}</p>
+          <Link className="mono" style={{ overflowWrap: "anywhere" }} href={`/trace?run=${runId}&resolve=${item.trace_id}`}>{item.trace_id}</Link>
+        </li>)}</ul>
+      </details>}
+      {clusters.length === 0 ? (exclusions.length === 0 && <p className="sub">{empty}</p>) : (
         <>
           {clusters.slice(0, GROUPS_SHOWN).map(card)}
           {clusters.length > GROUPS_SHOWN && (

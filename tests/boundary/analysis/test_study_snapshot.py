@@ -13,6 +13,7 @@ from simcore.trace.finalize import read_finalized_events
 from simcore.trace.views import SqliteTraceView
 from tests.boundary.trace.test_snapshot import two_worlds
 from tests.study_builders import population_payload
+from simcore.analysis._clusters import ClusteringDiagnostics
 
 
 def reference_analysis(views, cells, population, embed):
@@ -30,14 +31,19 @@ def reference_analysis(views, cells, population, embed):
     worlds = {}
     for world, (scenario, seed, outcome) in prepared.items():
         view = views[world]
-        clusters = cluster_objections(view, embed=embed, pinned_embed_model='openai/text-embedding-3-small', world_id=world)
-        reasons = cluster_reasons(view, embed=embed, pinned_embed_model='openai/text-embedding-3-small', world_id=world)
+        embedding_calls = []
+        diagnostics = ClusteringDiagnostics()
+        clusters = cluster_objections(view, embed=embed, pinned_embed_model='openai/text-embedding-3-small', world_id=world, embedding_calls=embedding_calls, diagnostics=diagnostics)
+        reasons = cluster_reasons(view, embed=embed, pinned_embed_model='openai/text-embedding-3-small', world_id=world, embedding_calls=embedding_calls, diagnostics=diagnostics)
         found = findings(view, embed=embed, pinned_embed_model='openai/text-embedding-3-small',
                          seed=seed, world_id=world, clusters=clusters, digest=outcome)
         detected = detect_anomalies(view, digest=outcome,
                                     replicate_spread=summaries[canonical_hash(scenario)].belief_move_spread)
         worlds[world] = dict(scenario=scenario, seed=seed, digest=outcome, findings=found, clusters=clusters,
-                             reasons=reasons, anomalies=detected.anomalies, unmeasured=detected.unmeasured)
+                             reasons=reasons, anomalies=detected.anomalies, unmeasured=detected.unmeasured,
+                             embedding_calls=tuple(embedding_calls),
+                             clustering_coverage=tuple(diagnostics.coverage),
+                             clustering_exclusions=tuple(diagnostics.exclusions))
     return dict(digests=digests, summaries=summaries, worlds=worlds,
                 trace_summary=trace_summary(views, run_id=next(iter(views.values()))._run_id))
 
